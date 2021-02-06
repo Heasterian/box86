@@ -17,6 +17,9 @@
 #include <limits.h>
 #include <errno.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <signal.h>
+#include <sys/syscall.h>
 #ifdef DYNAREC
 #ifdef ARM
 #include <linux/auxvec.h>
@@ -46,7 +49,6 @@ int box86_pagesize;
 #ifdef DYNAREC
 int box86_dynarec = 1;
 int box86_dynarec_dump = 0;
-int box86_dynarec_linker = 1;
 int box86_dynarec_forced = 0;
 int box86_dynarec_largest = 0;
 int box86_dynarec_smc = 0;
@@ -70,12 +72,18 @@ int box86_dynarec_trace = 0;
 #ifdef PANDORA
 int x11color16 = 0;
 #endif
+#ifdef RPI
+int box86_tokitori2 = 0;
+#endif
+int box86_zoom = 0;
 int x11threads = 0;
 int x11glx = 1;
 int allow_missing_libs = 0;
 int fix_64bit_inodes = 0;
 int box86_steam = 0;
 int box86_nopulse = 0;
+int box86_nogtk = 0;
+int box86_novulkan = 0;
 char* libGL = NULL;
 uintptr_t   trace_start = 0, trace_end = 0;
 char* trace_func = NULL;
@@ -83,6 +91,7 @@ uintptr_t fmod_smc_start = 0;
 uintptr_t fmod_smc_end = 0;
 uint32_t default_fs = 0;
 int jit_gdb = 0;
+int box86_tcmalloc_minimal = 0;
 
 FILE* ftrace = NULL;
 int ftrace_has_pid = 0;
@@ -110,7 +119,8 @@ void openFTrace()
             ftrace = stdout;
             printf_log(LOG_INFO, "Cannot open trace file \"%s\" for writing (error=%s)\n", p, strerror(errno));
         } else {
-            printf("BOX86 Trace redirected to \"%s\"\n", p);
+            if(!box86_nobanner)
+                printf("BOX86 Trace redirected to \"%s\"\n", p);
         }
     }
 }
@@ -186,7 +196,14 @@ EXPORTDYN
 void LoadLogEnv()
 {
     ftrace = stdout;
-    const char *p = getenv("BOX86_LOG");
+    const char *p = getenv("BOX86_NOBANNER");
+    if(p) {
+        if(strlen(p)==1) {
+            if(p[0]>='0' && p[1]<='1')
+                box86_nobanner = p[0]-'0';
+        }
+    }
+    p = getenv("BOX86_LOG");
     if(p) {
         if(strlen(p)==1) {
             if(p[0]>='0'+LOG_NONE && p[1]<='0'+LOG_DEBUG)
@@ -201,15 +218,8 @@ void LoadLogEnv()
             else if(!strcasecmp(p, "DUMP"))
                 box86_log = LOG_DUMP;
         }
-        printf_log(LOG_INFO, "Debug level is %d\n", box86_log);
-    }
-    p = getenv("BOX86_NOBANNER");
-    if(p) {
-        if(strlen(p)==1) {
-            if(p[0]>='0' && p[1]<='1')
-                box86_nobanner = p[0]-'0';
-        }
-        printf_log(LOG_INFO, "Dynarec is %s\n", box86_nobanner?"On":"Off");
+        if(!box86_nobanner)
+            printf_log(LOG_INFO, "Debug level is %d\n", box86_log);
     }
 #ifdef DYNAREC
     p = getenv("BOX86_DYNAREC_DUMP");
@@ -244,14 +254,6 @@ void LoadLogEnv()
                 box86_dynarec = p[0]-'0';
         }
         printf_log(LOG_INFO, "Dynarec is %s\n", box86_dynarec?"On":"Off");
-    }
-    p = getenv("BOX86_DYNAREC_LINKER");
-    if(p) {
-        if(strlen(p)==1) {
-            if(p[0]>='0' && p[1]<='1')
-                box86_dynarec_linker = p[0]-'0';
-        }
-        printf_log(LOG_INFO, "Dynarec Linker is %s\n", box86_dynarec_linker?"On":"Off");
     }
     p = getenv("BOX86_DYNAREC_FORCED");
     if(p) {
@@ -374,6 +376,24 @@ void LoadLogEnv()
         if(box86_nopulse)
             printf_log(LOG_INFO, "Disable the use of pulseaudio libs\n");
     }
+    p = getenv("BOX86_NOGTK");
+        if(p) {
+        if(strlen(p)==1) {
+            if(p[0]>='0' && p[1]<='0'+1)
+                box86_nogtk = p[0]-'0';
+        }
+        if(box86_nogtk)
+            printf_log(LOG_INFO, "Disable the use of wrapped gtk libs\n");
+    }
+    p = getenv("BOX86_NOVULKAN");
+        if(p) {
+        if(strlen(p)==1) {
+            if(p[0]>='0' && p[1]<='0'+1)
+                box86_novulkan = p[0]-'0';
+        }
+        if(box86_novulkan)
+            printf_log(LOG_INFO, "Disable the use of wrapped vulkan libs\n");
+    }
     p = getenv("BOX86_FIX_64BIT_INODES");
         if(p) {
         if(strlen(p)==1) {
@@ -390,7 +410,7 @@ void LoadLogEnv()
                 jit_gdb = p[0]-'0';
         }
         if(jit_gdb)
-            printf_log(LOG_INFO, "Launch gdb on segfault\n");
+            printf_log(LOG_INFO, "Launch %s on segfault\n", (jit_gdb==2)?"gdbserver":"gdb");
     }
     box86_pagesize = sysconf(_SC_PAGESIZE);
     if(!box86_pagesize)
@@ -498,7 +518,6 @@ void PrintHelp() {
 #ifdef DYNAREC
     printf(" BOX86_DYNAREC_LOG with 0/1/2/3 or NONE/INFO/DEBUG/DUMP to set the printed dynarec info\n");
     printf(" BOX86_DYNAREC with 0/1 to disable or enable Dynarec (On by default)\n");
-    printf(" BOX86_DYNAREC_LINKER with 0/1 to disable or enable Dynarec Linker (On by default, use 0 only for easier debug)\n");
 #endif
 #ifdef HAVE_TRACE
     printf(" BOX86_TRACE with 1 to enable x86 execution trace\n");
@@ -524,6 +543,8 @@ void PrintHelp() {
     printf(" BOX86_LD_PRELOAD=XXXX[:YYYYY] force loading XXXX (and YYYY...) libraries with the binary\n");
     printf(" BOX86_ALLOWMISSINGLIBS with 1 to allow to continue even if a lib is missing (unadvised, will probably  crash later)\n");
     printf(" BOX86_NOPULSE=1 to disable the loading of pulseaudio libs\n");
+    printf(" BOX86_NOGTK=1 to disable the loading of wrapped gtk libs\n");
+    printf(" BOX86_NOVULKAN=1 to disable the loading of wrapped vulkan libs\n");
     printf(" BOX86_JITGDB with 1 to launch \"gdb\" when a segfault is trapped, attached to the offending process\n");
 }
 
@@ -617,7 +638,7 @@ void setupTraceInit(box86context_t* context)
                 if(sscanf(p, "0x%X-0x%X", &trace_start, &trace_end)!=2)
                     sscanf(p, "%x-%x", &trace_start, &trace_end);
             }
-            if(trace_start)
+            if(trace_start || trace_end)
                 SetTraceEmu(trace_start, trace_end);
         } else {
             if (GetSymbolStartEnd(GetMapSymbol(my_context->maplib), p, &trace_start, &trace_end)) {
@@ -680,10 +701,47 @@ void endBox86()
     printf_log(LOG_DEBUG, "Calling atexit registered functions\n");
     CallAllCleanup(emu);
     // than call all the Fini (some "smart" ordering of the fini may be needed, but for now, callign in this order should be good enough)
-    printf_log(LOG_DEBUG, "Calling fini for all loaded elfs\n");
-    for (int i=0; i<my_context->elfsize; ++i)
-        RunElfFini(my_context->elfs[i], emu);
+    printf_log(LOG_DEBUG, "Calling fini for all loaded elfs and unload native libs\n");
+    RunElfFini(my_context->elfs[0], emu);
+    FreeLibrarian(&my_context->maplib);    // unload all libs
+    FreeLibrarian(&my_context->local_maplib);    // unload all libs
+    // waiting for all thread except this one to finish
+    int this_thread = GetTID();
+    int pid = getpid();
+    int running = 1;
+    int attempt = 0;
+    printf_log(LOG_DEBUG, "Waiting for all threads to finish before unloading box86context\n");
+    while(running) {
+        DIR *proc_dir;
+        char dirname[100];
+        snprintf(dirname, sizeof dirname, "/proc/self/task");
+        proc_dir = opendir(dirname);
+        running = 0;
+        if (proc_dir)
+        {
+            struct dirent *entry;
+            while ((entry = readdir(proc_dir)) != NULL && !running)
+            {
+                if(entry->d_name[0] == '.')
+                    continue;
 
+                int tid = atoi(entry->d_name);
+                // tid != pthread_t, so no pthread functions are available here
+                if(tid!=this_thread) {
+                    if(attempt>4000) {
+                        printf_log(LOG_INFO, "Stop waiting for remaining thread %04d\n", tid);
+                        // enough wait, kill all thread!
+                        syscall(__NR_tgkill, pid, tid, SIGABRT);
+                    } else {
+                        running = 1;
+                        ++attempt;
+                        sched_yield();
+                    }
+                }
+            }
+            closedir(proc_dir);
+        }
+    }
     // all done, free context
     FreeBox86Context(&my_context);
     if(libGL) {
@@ -793,7 +851,7 @@ int main(int argc, const char **argv, const char **env) {
     if(!strcmp(prog, "wine") || (strlen(prog)>5 && !strcmp(prog+strlen(prog)-strlen("/wine"), "/wine"))) {
         const char* prereserve = getenv("WINEPRELOADRESERVE");
         printf_log(LOG_INFO, "BOX86: Wine detected, WINEPRELOADRESERVE=\"%s\"\n", prereserve?prereserve:"");
-            wine_prereserve(prereserve);
+            //wine_prereserve(prereserve);
             // special case for winedbg, doesn't work anyway
         if(argv[nextarg+1] && strstr(argv[nextarg+1], "winedbg")==argv[nextarg+1]) {
             printf_log(LOG_NONE, "winedbg detected, not launching it!\n");
@@ -834,6 +892,10 @@ int main(int argc, const char **argv, const char **env) {
     } else {
         if(getenv("LD_PRELOAD")) {
             char* p = getenv("LD_PRELOAD");
+            if(strstr(p, "libtcmalloc_minimal.so.4"))
+                box86_tcmalloc_minimal = 1;
+            if(strstr(p, "libasan.so"))
+                box86_tcmalloc_minimal = 1; // it seems Address Sanitizer doesn't handle dlsym'd malloc very well
             ParseList(p, &ld_preload, 0);
             if (ld_preload.size && box86_log) {
                 printf_log(LOG_INFO, "BOX86 try to Preload ");
@@ -881,6 +943,25 @@ int main(int argc, const char **argv, const char **env) {
         free(my_context->argv[0]);
         my_context->argv[0] = strdup("./UnrealLinux.bin");
     }
+    #ifdef RPI
+    // special case for TokiTori 2+, that check if texture max size is > = 8192
+    if(strstr(prgname, "TokiTori2.bin.x86")==prgname) {
+        printf_log(LOG_INFO, "TokiTori 2+ detected, runtime patch to fix GPU non-power-of-two faillure\n");
+        box86_tokitori2 = 1;
+    }
+    #endif
+    // special case for zoom
+    if(strstr(prgname, "zoom")==prgname) {
+        printf_log(LOG_INFO, "Zoom detected, trying to use system libturbojpeg if possible\n");
+        box86_zoom = 1;
+    }
+    /*if(strstr(prgname, "awesomium_process")==prgname) {
+        printf_log(LOG_INFO, "awesomium_process detected, forcing emulated libpng12\n");
+        AddPath("libpng12.so.0", &my_context->box86_emulated_libs, 0);
+    }*/
+    /*if(!strcmp(prgname, "gdb")) {
+        exit(-1);
+    }*/
 
     for(int i=1; i<my_context->argc; ++i) {
         my_context->argv[i] = strdup(argv[i+nextarg]);
@@ -951,6 +1032,52 @@ int main(int argc, const char **argv, const char **env) {
     }
     // can close the file now
     fclose(f);
+    if(ElfCheckIfUseTCMallocMinimal(elf_header)) {
+        if(!box86_tcmalloc_minimal) {
+            // need to reload with tcmalloc_minimal as a LD_PRELOAD!
+            printf_log(LOG_INFO, "BOX86: tcmalloc_minimal.so.4 used, reloading box86 with the lib preladed\n");
+            // need to get a new envv variable. so first count it and check if LD_PRELOAD is there
+            int preload=(getenv("LD_PRELOAD"))?1:0;
+            int nenv = 0;
+            while(env[nenv]) nenv++;
+            // alloc + "LD_PRELOAD" if needd + last NULL ending
+            char** newenv = (char**)calloc(nenv+1+((preload)?0:1), sizeof(char*));
+            // copy strings
+            for (int i=0; i<nenv; ++i)
+                newenv[i] = strdup(env[i]);
+            // add ld_preload
+            if(preload) {
+                // find the line
+                int l = 0;
+                while(l<nenv) {
+                    if(strstr(newenv[l], "LD_PRELOAD=")==newenv[l]) {
+                        // found it!
+                        char *old = newenv[l];
+                        newenv[l] = (char*)calloc(strlen(old)+strlen("libtcmalloc_minimal.so.4:")+1, sizeof(char));
+                        strcpy(newenv[l], "LD_PRELOAD=libtcmalloc_minimal.so.4:");
+                        strcat(newenv[l], old + strlen("LD_PRELOAD="));
+                        free(old);
+                        // done, end loop
+                        l = nenv;
+                    } else ++l;
+                }
+            } else {
+                //move last one
+                newenv[nenv] = strdup(newenv[nenv-1]);
+                free(newenv[nenv-1]);
+                newenv[nenv-1] = strdup("LD_PRELOAD=libtcmalloc_minimal.so.4");
+            }
+            // duplicate argv too
+            char** newargv = calloc(argc+1, sizeof(char*));
+            int narg = 0;
+            while(argv[narg]) {newargv[narg] = strdup(argv[narg]); narg++;}
+            // launch with new env...
+            if(execve(newargv[0], newargv, newenv)<0)
+                printf_log(LOG_NONE, "Failed to relaunch, error is %d/%s\n", errno, strerror(errno));
+        } else {
+            printf_log(LOG_INFO, "BOX86: Using tcmalloc_minimal.so.4, and it's in the LD_PRELOAD command\n");
+        }
+    }
     // get and alloc stack size and align
     if(CalcStackSize(my_context)) {
         printf_log(LOG_NONE, "Error: allocating stack\n");
@@ -959,6 +1086,16 @@ int main(int argc, const char **argv, const char **env) {
         FreeCollection(&ld_preload);
         return -1;
     }
+    #ifdef RPI
+    if(box86_tokitori2) {
+        uint32_t *patch = (uint32_t*)0x85897f4;
+        if(*patch==0x2000) {
+            *patch = 0x1000;
+            printf_log(LOG_NONE, "Runtime patching the game\n");
+        } else
+            printf_log(LOG_NONE, "Cannot patch the game\n");
+    }
+    #endif
     // init x86 emu
     x86emu_t *emu = NewX86Emu(my_context, my_context->ep, (uintptr_t)my_context->stack, my_context->stacksz, 0);
     // stack setup is much more complicated then just that!
@@ -975,7 +1112,7 @@ int main(int argc, const char **argv, const char **env) {
     setupTraceInit(my_context);
     // export symbols
     AddSymbols(my_context->maplib, GetMapSymbol(my_context->maplib), GetWeakSymbol(my_context->maplib), GetLocalSymbol(my_context->maplib), elf_header);
-    if(wine_preloaded) {
+    /*if(wine_preloaded) {
         uintptr_t wineinfo = FindSymbol(GetMapSymbol(my_context->maplib), "wine_main_preload_info");
         if(!wineinfo) wineinfo = FindSymbol(GetWeakSymbol(my_context->maplib), "wine_main_preload_info");
         if(!wineinfo) wineinfo = FindSymbol(GetLocalSymbol(my_context->maplib), "wine_main_preload_info");
@@ -984,7 +1121,10 @@ int main(int argc, const char **argv, const char **env) {
             *(void**)wineinfo = get_wine_prereserve();
             printf_log(LOG_DEBUG, "WINE wine_main_preload_info found and updated\n");
         }
-    }
+        #ifdef DYNAREC
+        dynarec_wine_prereserve();
+        #endif
+    }*/
     // pre-load lib if needed
     if(ld_preload.size) {
         for (int i=0; i<ld_preload.size; ++i) {

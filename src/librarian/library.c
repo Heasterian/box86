@@ -93,14 +93,14 @@ int EmuLib_Get(library_t* lib, const char* name, uintptr_t *offs, uint32_t *sz)
     if(k!=kh_end(lib->priv.n.mapsymbols)) {
         *offs = kh_value(lib->priv.n.mapsymbols, k).offs;
         *sz = kh_value(lib->priv.n.mapsymbols, k).sz;
-        return *offs;
+        return 1;
     }
     // weak symbols...
     k = kh_get(mapsymbols, lib->priv.n.weaksymbols, name);
     if(k!=kh_end(lib->priv.n.weaksymbols)) {
         *offs = kh_value(lib->priv.n.weaksymbols, k).offs;
         *sz = kh_value(lib->priv.n.weaksymbols, k).sz;
-        return *offs;
+        return 1;
     }
     return 0;
 }
@@ -111,7 +111,7 @@ int EmuLib_GetNoWeak(library_t* lib, const char* name, uintptr_t *offs, uint32_t
     if(k!=kh_end(lib->priv.n.mapsymbols)) {
         *offs = kh_value(lib->priv.n.mapsymbols, k).offs;
         *sz = kh_value(lib->priv.n.mapsymbols, k).sz;
-        return *offs;
+        return 1;
     }
     return 0;
 }
@@ -122,7 +122,7 @@ int EmuLib_GetLocal(library_t* lib, const char* name, uintptr_t *offs, uint32_t 
     if(k!=kh_end(lib->priv.n.localsymbols)) {
         *offs = kh_value(lib->priv.n.localsymbols, k).offs;
         *sz = kh_value(lib->priv.n.localsymbols, k).sz;
-        return *offs;
+        return 1;
     }
     return 0;
 }
@@ -201,7 +201,6 @@ static int loadEmulatedLib(const char* libname, library_t *lib, box86context_t* 
         ElfAttachLib(elf_header, lib);
 
         lib->type = 1;
-        lib->context = context;
         lib->fini = EmuLib_Fini;
         lib->get = EmuLib_Get;
         lib->getnoweak = EmuLib_GetNoWeak;
@@ -242,10 +241,17 @@ library_t *NewLibrary(const char* path, box86context_t* context)
     lib->path = strdup(path);
     lib->name = Path2Name(path);
     lib->nbdot = NbDot(lib->name);
+    lib->context = context;
     lib->type = -1;
     printf_log(LOG_DEBUG, "Simplified name is \"%s\"\n", lib->name);
     if(box86_nopulse) {
         if(strstr(lib->name, "libpulse.so")==lib->name || strstr(lib->name, "libpulse-simple.so")==lib->name) {
+            Free1Library(&lib);
+            return NULL;
+        }
+    }
+    if(box86_novulkan) {
+        if(strstr(lib->name, "libvulkan.so")==lib->name) {
             Free1Library(&lib);
             return NULL;
         }

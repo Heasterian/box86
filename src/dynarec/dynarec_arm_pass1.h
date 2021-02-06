@@ -8,7 +8,7 @@
 #define SETFLAGS(A,B)   {dyn->insts[ninst].x86.set_flags = A; dyn->insts[ninst].x86.state_flags = B;}
 #define JUMP(A)         dyn->insts[ninst].x86.jmp = A
 #define BARRIER(A)      dyn->insts[ninst].x86.barrier = A
-#define BARRIER_NEXT(A) if(ninst+1<dyn->size) dyn->insts[ninst+1].x86.barrier = A
+#define BARRIER_NEXT(A) if(ninst<dyn->size) dyn->insts[ninst+1].x86.barrier = A
 
 #define NEW_INST \
     dyn->insts[ninst].x86.addr = ip; \

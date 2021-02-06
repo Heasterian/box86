@@ -94,7 +94,7 @@ int Run(x86emu_t *emu, int step)
     &&_0xD8,    &&_0xD9,    &&_0xDA,    &&_0xDB,    &&_0xDC,    &&_0xDD,    &&_0xDE,    &&_0xDF, 
     &&_0xE0,    &&_0xE1,    &&_0xE2,    &&_0xE3,    &&_0xE4,    &&_0xE5,    &&_0xE6,    &&_0xE7,
     &&_0xE8,    &&_0xE9,    &&_default, &&_0xEB,    &&_0xEC,    &&_0xED,    &&_default, &&_default,
-    &&_0xF0,    &&_0xF1,    &&_0xF2,    &&_0xF3,    &&_default, &&_0xF5,    &&_0xF6,    &&_0xF7, 
+    &&_0xF0,    &&_0xF1,    &&_0xF2,    &&_0xF3,    &&_0xF4,    &&_0xF5,    &&_0xF6,    &&_0xF7, 
     &&_0xF8,    &&_0xF9,    &&_0xFA,    &&_0xFB,    &&_0xFC,    &&_0xFD,    &&_0xFE,    &&_0xFF
     };
 
@@ -134,19 +134,19 @@ int Run(x86emu_t *emu, int step)
     };
 
     static const void* opcodes66[256] = {
-    &&_default, &&_66_0x00_1, &&_default, &&_66_0x00_3, &&_default ,&&_66_0x00_5, &&_66_0x06, &&_66_0x07, //0x00-0x07
-    &&_default, &&_66_0x08_1, &&_default, &&_66_0x08_3, &&_default ,&&_66_0x08_5, &&_default, &&_66_0x0F, //0x08-0x0F
-    &&_default, &&_66_0x10_1, &&_default, &&_66_0x10_3, &&_default ,&&_66_0x10_5, &&_default, &&_default, //0x10-0x17
-    &&_default, &&_66_0x18_1, &&_default, &&_66_0x18_3, &&_default ,&&_66_0x18_5, &&_default, &&_default, //0x18-0x1F
-    &&_default, &&_66_0x20_1, &&_default, &&_66_0x20_3, &&_default ,&&_66_0x20_5, &&_66_0x26, &&_default, //0x20-0x27
-    &&_default, &&_66_0x28_1, &&_default, &&_66_0x28_3, &&_default ,&&_66_0x28_5, &&_66_0x2E, &&_default, //0x28-0x2F
-    &&_default, &&_66_0x30_1, &&_default, &&_66_0x30_3, &&_default ,&&_66_0x30_5, &&_66_0x36, &&_default, //0x30-0x37
+    &&_66_0x00_0, &&_66_0x00_1, &&_66_0x00_2, &&_66_0x00_3, &&_66_0x00_4 ,&&_66_0x00_5, &&_66_0x06, &&_66_0x07, //0x00-0x07
+    &&_66_0x08_0, &&_66_0x08_1, &&_66_0x08_2, &&_66_0x08_3, &&_66_0x08_4 ,&&_66_0x08_5, &&_default, &&_66_0x0F, //0x08-0x0F
+    &&_66_0x10_0, &&_66_0x10_1, &&_66_0x10_2, &&_66_0x10_3, &&_66_0x10_4 ,&&_66_0x10_5, &&_default, &&_default, //0x10-0x17
+    &&_66_0x18_0, &&_66_0x18_1, &&_66_0x18_2, &&_66_0x18_3, &&_66_0x18_4 ,&&_66_0x18_5, &&_default, &&_66_0x1F, //0x18-0x1F
+    &&_66_0x20_0, &&_66_0x20_1, &&_66_0x20_2, &&_66_0x20_3, &&_66_0x20_4 ,&&_66_0x20_5, &&_66_0x26, &&_default, //0x20-0x27
+    &&_66_0x28_0, &&_66_0x28_1, &&_66_0x28_2, &&_66_0x28_3, &&_66_0x28_4 ,&&_66_0x28_5, &&_66_0x2E, &&_default, //0x28-0x2F
+    &&_66_0x30_0, &&_66_0x30_1, &&_66_0x30_2, &&_66_0x30_3, &&_66_0x30_4 ,&&_66_0x30_5, &&_66_0x36, &&_default, //0x30-0x37
     &&_default, &&_66_0x39, &&_default, &&_66_0x3B, &&_default, &&_66_0x3D, &&_default, &&_default, //0x38-0x3F
     &&_66_0x40, &&_66_0x41, &&_66_0x42, &&_66_0x43, &&_66_0x44, &&_66_0x45, &&_66_0x46, &&_66_0x47, 
     &&_66_0x48, &&_66_0x49, &&_66_0x4A, &&_66_0x4B, &&_66_0x4C, &&_66_0x4D, &&_66_0x4E, &&_66_0x4F, 
     &&_66_0x50, &&_66_0x51, &&_66_0x52, &&_66_0x53, &&_66_0x54, &&_66_0x55, &&_66_0x56, &&_66_0x57, //0x50-0x57
     &&_66_0x58, &&_66_0x59, &&_66_0x5A, &&_66_0x5B, &&_66_0x5C, &&_66_0x5D, &&_66_0x5E, &&_66_0x5F, //0x58-0x5F
-    &&_66_0x60, &&_66_0x61, &&_default, &&_default, &&_default ,&&_default, &&_66_0x66, &&_default, //0x60-0x67
+    &&_66_0x60, &&_66_0x61, &&_default, &&_default, &&_66_0x64 ,&&_default, &&_66_0x66, &&_default, //0x60-0x67
     &&_66_0x68, &&_66_0x69, &&_66_0x6A, &&_66_0x6B, &&_default, &&_default, &&_default, &&_default, //0x68-0x6F
     &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0x70-0x77
     &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0x78-0x7F
@@ -159,18 +159,17 @@ int Run(x86emu_t *emu, int step)
     &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0xB0-0xB7
     &&_66_0xB8, &&_66_0xB9, &&_66_0xBA, &&_66_0xBB, &&_66_0xBC, &&_66_0xBD, &&_66_0xBE, &&_66_0xBF, 
     &&_default, &&_66_0xC1, &&_default, &&_default, &&_default, &&_default, &&_default, &&_66_0xC7, 
-    &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0xC8-0xCF
+    &&_default, &&_default, &&_default, &&_66_0xCB, &&_66_0xCC ,&&_default, &&_default, &&_default, //0xC8-0xCF
     &&_default, &&_66_0xD1, &&_default, &&_66_0xD3, &&_default, &&_default, &&_default, &&_default, //0xD0-0xD7
     &&_default, &&_66_0xD9, &&_default, &&_default, &&_default ,&&_66_0xDD, &&_default, &&_default, //0xD8-0xDF
     &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0xE0-0xE7
     &&_default, &&_default, &&_default, &&_default, &&_default ,&&_default, &&_default, &&_default, //0xE8-0xEF
-    &&_default, &&_default, &&_66_0xF2, &&_66_0xF3, &&_default, &&_default, &&_default, &&_66_0xF7, 
+    &&_66_0xF0, &&_default, &&_66_0xF2, &&_66_0xF3, &&_default, &&_default, &&_default, &&_66_0xF7, 
     &&_66_0xF8, &&_66_0xF9, &&_default, &&_default, &&_default, &&_default, &&_default, &&_66_0xFF
     };
 
 x86emurun:
     ip = R_EIP;
-//    UnpackFlags(emu);
 #ifdef HAVE_TRACE
 _trace:
     __builtin_prefetch((void*)ip, 0, 0); 
@@ -263,7 +262,7 @@ _trace:
             NEXT;
         _0x07:                      /* POP ES */
             emu->segs[_ES] = Pop(emu);    // no check, no use....
-            emu->segs_clean[_ES] = 0;
+            emu->segs_serial[_ES] = 0;
             NEXT;
 
         _0x0E:                      /* PUSH CS */
@@ -278,7 +277,7 @@ _trace:
             NEXT;
         _0x17:                      /* POP SS */
             emu->segs[_SS] = Pop(emu);    // no check, no use....
-            emu->segs_clean[_SS] = 0;
+            emu->segs_serial[_SS] = 0;
             NEXT;
 
         _0x1E:                      /* PUSH DS */
@@ -286,7 +285,7 @@ _trace:
             NEXT;
         _0x1F:                      /* POP DS */
             emu->segs[_DS] = Pop(emu);    // no check, no use....
-            emu->segs_clean[_DS] = 0;
+            emu->segs_serial[_DS] = 0;
             NEXT;
 
         _0x26:                      /* ES: */
@@ -399,6 +398,7 @@ _trace:
             RunFS(emu); // implemented in Run66.c
             ip = R_EIP;
             if(emu->quit) goto fini;
+            STEP
             NEXT;
         _0x65:                      /* GS: */
             emu->old_ip = R_EIP;
@@ -406,6 +406,7 @@ _trace:
             RunGS(emu); // implemented in Run66.c
             ip = R_EIP;
             if(emu->quit) goto fini;
+            STEP
             NEXT;
 
         _0x66:                      /* Prefix to change width of intructions, so here, down to 16bits */
@@ -416,6 +417,7 @@ _trace:
             Run67(emu); // implemented in Run66.c
             ip = R_EIP;
             if(emu->quit) goto fini;
+            STEP
             NEXT;
 
         _0x68:                      /* Push Id */
@@ -642,13 +644,11 @@ _trace:
                     // not aligned, dont't try to "LOCK"
                     tmp32u = ED->dword[0];
                     ED->dword[0] = GD.dword[0];
+                    GD.dword[0] = tmp32u;
                 } else {
                     // XCHG is supposed to automaticaly LOCK memory bus
-                    do {
-                        tmp32u = arm_lock_read_d(ED);
-                    } while(arm_lock_write_d(ED, GD.dword[0]));
+                    GD.dword[0] = arm_lock_xchg(ED, GD.dword[0]);
                 }
-                GD.dword[0] = tmp32u;
             }
 #else
             GET_ED;
@@ -695,14 +695,21 @@ _trace:
             nextop = F8;
             GET_EW;
             emu->segs[((nextop&0x38)>>3)] = EW->word[0];
-            emu->segs_clean[((nextop&0x38)>>3)] = 0;
+            emu->segs_serial[((nextop&0x38)>>3)] = 0;
             if(((nextop&0x38)>>3)==_FS)
                 default_fs = EW->word[0];
             NEXT;
         _0x8F:                      /* POP Ed */
             nextop = F8;
-            GET_ED;
-            ED->dword[0] = Pop(emu);
+            if((nextop&0xC0)==0xC0) {
+                emu->regs[(nextop&7)].dword[0] = Pop(emu);
+            } else {
+                tmp32u = Pop(emu);  // this order allows handling POP [ESP] and variant
+                GET_ED;
+                R_ESP -= 4; // to prevent issue with SEGFAULT
+                ED->dword[0] = tmp32u;
+                R_ESP += 4;
+            }
             NEXT;
         _0x90:                      /* NOP */
             NEXT;
@@ -729,12 +736,10 @@ _trace:
             NEXT;
         _0x9C:                      /* PUSHF */
             CHECK_FLAGS(emu);
-            PackFlags(emu);
-            Push(emu, emu->packed_eflags.x32);
+            Push(emu, emu->eflags.x32);
             NEXT;
         _0x9D:                      /* POPF */
-            emu->packed_eflags.x32 = ((Pop(emu) & 0x3F7FD7)/* & (0xffff-40)*/ ) | 0x2; // mask off res2 and res3 and on res1
-            UnpackFlags(emu);
+            emu->eflags.x32 = ((Pop(emu) & 0x3F7FD7)/* & (0xffff-40)*/ ) | 0x2; // mask off res2 and res3 and on res1
             RESET_FLAGS(emu);
             NEXT;
         _0x9E:                      /* SAHF */
@@ -748,8 +753,7 @@ _trace:
             NEXT;
         _0x9F:                      /* LAHF */
             CHECK_FLAGS(emu);
-            PackFlags(emu);
-            R_AH = (uint8_t)emu->packed_eflags.x32;
+            R_AH = (uint8_t)emu->eflags.x32;
             NEXT;
 
         _0xA0:                      /* MOV AL,Ob */
@@ -896,14 +900,14 @@ _trace:
             nextop = F8;
             GET_ED;
             emu->segs[_ES] = ED->word[0];
-            emu->segs_clean[_ES] = 0;
+            emu->segs_serial[_ES] = 0;
             GD.dword[0] = *(uint32_t*)(((void*)ED)+2);
             NEXT;
         _0xC5:                      /* LDS Gd,Ed */
             nextop = F8;
             GET_ED;
             emu->segs[_DS] = ED->word[0];
-            emu->segs_clean[_DS] = 0;
+            emu->segs_serial[_DS] = 0;
             GD.dword[0] = *(uint32_t*)(((void*)ED)+2);
             NEXT;
         _0xC6:                      /* MOV Eb,Ib */
@@ -941,7 +945,7 @@ _trace:
         _0xCB:                      /* FAR RET */
             ip = Pop(emu);
             emu->segs[_CS] = Pop(emu);    // no check, no use....
-            emu->segs_clean[_CS] = 0;
+            emu->segs_serial[_CS] = 0;
             // need to check status of CS register!
             STEP
             NEXT;
@@ -974,9 +978,8 @@ _trace:
         _0xCF:                      /* IRET */
             ip = Pop(emu);
             emu->segs[_CS] = Pop(emu);
-            emu->segs_clean[_CS] = 0;
-            emu->packed_eflags.x32 = ((Pop(emu) & 0x3F7FD7)/* & (0xffff-40)*/ ) | 0x2; // mask off res2 and res3 and on res1
-            UnpackFlags(emu);
+            emu->segs_serial[_CS] = 0;
+            emu->eflags.x32 = ((Pop(emu) & 0x3F7FD7)/* & (0xffff-40)*/ ) | 0x2; // mask off res2 and res3 and on res1
             RESET_FLAGS(emu);
             NEXT;
         _0xD0:                      /* GRP2 Eb,1 */
@@ -1056,6 +1059,7 @@ _trace:
             --R_ECX; // don't update flags
             if(R_ECX && !ACCESS_FLAG(F_ZF))
                 ip += tmp8s;
+            STEP
             NEXT;
         _0xE1:                      /* LOOPZ */
             CHECK_FLAGS(emu);
@@ -1063,19 +1067,20 @@ _trace:
             --R_ECX; // don't update flags
             if(R_ECX && ACCESS_FLAG(F_ZF))
                 ip += tmp8s;
+            STEP
             NEXT;
         _0xE2:                      /* LOOP */
             tmp8s = F8S;
             --R_ECX; // don't update flags
             if(R_ECX)
                 ip += tmp8s;
+            STEP
             NEXT;
         _0xE3:                      /* JECXZ */
             tmp8s = F8S;
-            if(!R_ECX) {
+            if(!R_ECX)
                 ip += tmp8s;
-                STEP
-            }
+            STEP
             NEXT;
         _0xE4:                      /* IN AL, Ib */
             tmp32s = F8;   // port address
@@ -1136,6 +1141,7 @@ _trace:
                 } else {
                     #include "runf20f.h"
                 }
+                STEP
                 NEXT;
             } else if(nextop==0x66) {
                 nextop = F8;
@@ -1239,6 +1245,24 @@ _trace:
                     case 0x4D:
                     case 0x4E:
                     case 0x4F:
+                    case 0x50:
+                    case 0x51:
+                    case 0x52:
+                    case 0x53:
+                    case 0x54:
+                    case 0x55:
+                    case 0x56:
+                    case 0x57:
+                    case 0x58:
+                    case 0x59:
+                    case 0x5A:
+                    case 0x5B:
+                    case 0x5C:
+                    case 0x5D:
+                    case 0x5E:
+                    case 0x5F:
+                    case 0x60:
+                    case 0x61:
                     case 0x70:
                     case 0x71:
                     case 0x72:
@@ -1418,7 +1442,11 @@ _trace:
                 R_ECX = tmp32u;
             }   // else(nextop==0x0F)
             NEXT;
-
+        _0xF4:                      /* HLT */
+            // this is a privilege opcode... should an error be called instead?
+            sched_yield();
+            STEP;
+            NEXT;
         _0xF5:                      /* CMC */
             CHECK_FLAGS(emu);
             CONDITIONAL_SET_FLAG(!ACCESS_FLAG(F_CF), F_CF);
@@ -1430,7 +1458,8 @@ _trace:
             switch((nextop>>3)&7) {
                 case 0: 
                 case 1:                 /* TEST Eb,Ib */
-                    test8(emu, EB->byte[0], F8);
+                    tmp8u = F8;
+                    test8(emu, EB->byte[0], tmp8u);
                     break;
                 case 2:                 /* NOT Eb */
                     EB->byte[0] = not8(emu, EB->byte[0]);
@@ -1458,7 +1487,8 @@ _trace:
             switch((nextop>>3)&7) {
                 case 0: 
                 case 1:                 /* TEST Ed,Id */
-                    test32(emu, ED->dword[0], F32);
+                    tmp32u = F32;
+                    test32(emu, ED->dword[0], tmp32u);
                     break;
                 case 2:                 /* NOT Ed */
                     ED->dword[0] = not32(emu, ED->dword[0]);
@@ -1503,6 +1533,7 @@ _trace:
             NEXT;
         _0xFE:                      /* GRP 5 Eb */
             nextop = F8;
+            tmp32u2 = ip;
             GET_EB;
             switch((nextop>>3)&7) {
                 case 0:                 /* INC Eb */
@@ -1513,8 +1544,8 @@ _trace:
                     break;
                 default:
                     emu->old_ip = R_EIP;
-                    R_EIP = ip;
-                    printf_log(LOG_NONE, "Illegal Opcode %02X %02X\n", opcode, nextop);
+                    R_EIP = ip = tmp32u2;
+                    printf_log(LOG_NONE, "Illegal Opcode %p: %02X %02X %02X %02X\n", (void*)ip, opcode, nextop, PK(2), PK(3));
                     emu->quit=1;
                     emu->error |= ERR_ILLEGAL;
                     goto fini;
@@ -1522,6 +1553,7 @@ _trace:
             NEXT;
         _0xFF:                      /* GRP 5 Ed */
             nextop = F8;
+            tmp32u2 = ip;
             GET_ED;
             switch((nextop>>3)&7) {
                 case 0:                 /* INC Ed */
@@ -1539,8 +1571,8 @@ _trace:
                 case 3:                 /* CALL FAR Ed */
                     if(nextop>0xc0) {
                         emu->old_ip = R_EIP;
-                        R_EIP = ip;
-                        printf_log(LOG_NONE, "Illegal Opcode %02X %02X\n", opcode, nextop);
+                        R_EIP = ip = tmp32u2;
+                        printf_log(LOG_NONE, "Illegal Opcode %p: %02X %02X %02X %02X\n", (void*)ip, opcode, nextop, PK(2), PK(3));
                         emu->quit=1;
                         emu->error |= ERR_ILLEGAL;
                         goto fini;
@@ -1559,8 +1591,8 @@ _trace:
                 case 5:                 /* JMP FAR Ed */
                     if(nextop>0xc0) {
                         emu->old_ip = R_EIP;
-                        R_EIP = ip;
-                        printf_log(LOG_NONE, "Illegal Opcode 0x%02X 0x%02X\n", opcode, nextop);
+                        R_EIP = ip = tmp32u2;
+                        printf_log(LOG_NONE, "Illegal Opcode %p: 0x%02X 0x%02X %02X %02X\n", (void*)ip, opcode, nextop, PK(2), PK(3));
                         emu->quit=1;
                         emu->error |= ERR_ILLEGAL;
                         goto fini;
@@ -1576,8 +1608,8 @@ _trace:
                     break;
                 default:
                     emu->old_ip = R_EIP;
-                    R_EIP = ip;
-                    printf_log(LOG_NONE, "Illegal Opcode %02X %02X %02X %02X %02X %02X\n", opcode, nextop, PK(2), PK(3), PK(4), PK(5));
+                    R_EIP = ip = tmp32u2;
+                    printf_log(LOG_NONE, "Illegal Opcode %p: %02X %02X %02X %02X %02X %02X\n",(void*)ip, opcode, nextop, PK(2), PK(3), PK(4), PK(5));
                     emu->quit=1;
                     emu->error |= ERR_ILLEGAL;
                     goto fini;

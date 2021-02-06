@@ -52,8 +52,7 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             READFLAGS(X_CF);
             v1 = x87_get_st(dyn, ninst, x1, x2, 0);
             v2 = x87_get_st(dyn, ninst, x1, x2, nextop&7);
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_CF]));
-            TSTS_REG_LSL_IMM5(x1, x1, 0);
+            TSTS_IMM8(xFlags, 1<<F_CF);
             VMOVcond_64(cEQ, v1, v2);   // F_CF==0
             break;
         case 0xC8:
@@ -68,8 +67,7 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             READFLAGS(X_ZF);
             v1 = x87_get_st(dyn, ninst, x1, x2, 0);
             v2 = x87_get_st(dyn, ninst, x1, x2, nextop&7);
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_ZF]));
-            TSTS_REG_LSL_IMM5(x1, x1, 0);
+            TSTS_IMM8(xFlags, 1<<F_ZF);
             VMOVcond_64(cEQ, v1, v2);   // F_ZF==0
             break;
         case 0xD0:
@@ -84,10 +82,8 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             READFLAGS(X_CF|X_ZF);
             v1 = x87_get_st(dyn, ninst, x1, x2, 0);
             v2 = x87_get_st(dyn, ninst, x1, x2, nextop&7);
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_ZF]));
-            LDR_IMM9(x2, xEmu, offsetof(x86emu_t, flags[F_CF]));
-            ORRS_REG_LSL_IMM5(x1, x1, x2, 0);
-            VMOVcond_64(cEQ, v1, v2);   // F_CF==0 | F_ZF==0
+            TSTS_IMM8(xFlags, (1<<F_CF)|(1<<F_ZF));
+            VMOVcond_64(cEQ, v1, v2);   // F_CF==0 & F_ZF==0
             break;
         case 0xD8:
         case 0xD9:
@@ -101,8 +97,7 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             READFLAGS(X_PF);
             v1 = x87_get_st(dyn, ninst, x1, x2, 0);
             v2 = x87_get_st(dyn, ninst, x1, x2, nextop&7);
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_PF]));
-            TSTS_REG_LSL_IMM5(x1, x1, 0);
+            TSTS_IMM8(xFlags, 1<<F_PF);
             VMOVcond_64(cEQ, v1, v2);   // F_PF==0
             break;
         case 0xE1:
@@ -110,8 +105,8 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             break;
         case 0xE2:
             INST_NAME("FNCLEX");
-            MOVW(x1, 0);
             LDRH_IMM8(x2, xEmu, offsetof(x86emu_t, sw));
+            MOVW(x1, 0);
             BFI(x2, x1, 0, 8);  // IE .. PE, SF, ES
             BFI(x2, x1, 15, 1); // B
             STRH_IMM8(x2, xEmu, offsetof(x86emu_t, sw));
@@ -188,8 +183,8 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     }
                     s0 = fpu_get_scratch_single(dyn);
                     MSR_nzcvq_0();
-                    VMRS(x12);   // Get FPCSR reg to clear exceptions flags
-                    ORR_IMM8(x3, x12, 0b001, 6); // enable exceptions
+                    VMRS(x14);   // Get FPCSR reg to clear exceptions flags
+                    ORR_IMM8(x3, x14, 0b001, 6); // enable exceptions
                     BIC_IMM8(x3, x3, 0b10011111, 0);
                     VMSR(x3);
                     VCVT_S32_F64(s0, v1);
@@ -198,13 +193,13 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     TSTS_IMM8_ROR(x3, 0b00000001, 0);
                     MOV_IMM_COND(cNE, ed, 0b10, 1);   // 0x80000000
                     WBACK;
-                    VMSR(x12);  // put back values
+                    VMSR(x14);  // put back values
                     x87_do_pop(dyn, ninst);
                     break;
                 case 2:
                     INST_NAME("FIST Ed, ST0");
                     v1 = x87_get_st(dyn, ninst, x1, x2, 0);
-                    u8 = x87_setround(dyn, ninst, x1, x2, x12); // x1 have the modified RPSCR reg
+                    u8 = x87_setround(dyn, ninst, x1, x2, x14); // x1 have the modified RPSCR reg
                     if((nextop&0xC0)==0xC0) {
                         ed = xEAX+(nextop&7);
                         wback = 0;
@@ -229,7 +224,7 @@ uintptr_t dynarecDB(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 case 3:
                     INST_NAME("FISTP Ed, ST0");
                     v1 = x87_get_st(dyn, ninst, x1, x2, 0);
-                    u8 = x87_setround(dyn, ninst, x1, x2, x12); // x1 have the modified RPSCR reg
+                    u8 = x87_setround(dyn, ninst, x1, x2, x14); // x1 have the modified RPSCR reg
                     if((nextop&0xC0)==0xC0) {
                         ed = xEAX+(nextop&7);
                         wback = 0;

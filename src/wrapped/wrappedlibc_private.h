@@ -255,7 +255,7 @@ GO(epoll_ctl, iFiiip)
 GO(epoll_wait, iFipii)
 #else
 GOM(epoll_create, iFEi)      // not needed, but used in syscall
-GOM(epoll_create1, iFEi)
+GOM(epoll_create1, iFEO)
 GOM(epoll_ctl, iFEiiip)     // align epool_event structure
 // epoll_pwait
 GOM(epoll_wait, iFEipii)    // need realign of epoll_event structure
@@ -303,9 +303,9 @@ GOW(fchown, iFiuu)
 GO(fchownat, iFipuii)
 GO(fclose, iFp)
 GOW(fcloseall, iFv)
-GOM(fcntl, iFEiiuuuuuu)  // this also use a vararg for 3rd argument
-GOM(__fcntl, iFEiiuuuuuu)
-GOM(fcntl64, iFEiiuuuuuu)
+GOM(fcntl, iFEiiN)  // this also use a vararg for 3rd argument
+GOM(__fcntl, iFEiiN)
+GOM(fcntl64, iFEiiN)
 GO(fcvt, pFdipp)
 GO(fcvt_r, iFdipppL)
 GO(fdatasync, iFi)
@@ -413,8 +413,8 @@ GOM(fstatfs64, iFip)    // weak
 GO(fstatvfs, iFip)
 GOW(fstatvfs64, iFip)   // alignment?
 GOW(fsync, iFi)
-GOW(ftell, iFp)
-GO(ftello, uFp)
+GOW(ftell, lFp)
+GO(ftello, lFp)
 GO(ftello64, IFp)
 GO(ftime, iFp)
 GO(ftok, iFpi)
@@ -430,7 +430,7 @@ GOM(ftw, iFEppi)
 GOM(ftw64, iFEppi)
 GOW(funlockfile, vFp)
 GO(futimens, iFip)
-GOW(futimes, iFipp) //int futimes(int fd, const struct timeval tv[2]) TODO: check how it ends up
+GOW(futimes, iFip) //int futimes(int fd, const struct timeval tv[2])
 GO(futimesat, iFippp)
 // fwide
 GOM(fwprintf, iFEppVV) // Weak
@@ -714,7 +714,7 @@ DATA(_IO_2_1_stdin_, 152)
 DATA(_IO_2_1_stdout_, 152)
 GO(_IO_adjust_column, uFupi)
 // _IO_adjust_wcolumn
-GO(ioctl, iFiuppppp)   //the vararg is just to have args of various type, but only 1 arg
+GO(ioctl, iFiLN)   //the vararg is just to have optional arg of various type, but only 1 arg
 GO(_IO_default_doallocate, iFS)
 GO(_IO_default_finish, vFSi)
 GO(_IO_default_pbackfail, iFSi)
@@ -884,18 +884,33 @@ GOW(isnanf, iFf)
 GO(__isnanf, iFf)
 // isnanl   // Weak
 // __isnanl
+#ifdef POWERPCLE
+GOM(__isoc99_fscanf, iFppV)
+// __isoc99_fwscanf
+// __isoc99_scanf
+GOM(__isoc99_sscanf, iFppV)
+// __isoc99_swscanf
+GOM(__isoc99_vfscanf, iFppp)
+// __isoc99_vfwscanf
+// __isoc99_vscanf
+GOM(__isoc99_vsscanf, iFppp) // TODO: check if ok
+// __isoc99_vswscanf
+// __isoc99_vwscanf
+// __isoc99_wscanf
+#else
 GO2(__isoc99_fscanf, iFppV, __isoc99_vfscanf)
 // __isoc99_fwscanf
 // __isoc99_scanf
 GO2(__isoc99_sscanf, iFppV, __isoc99_vsscanf)
 // __isoc99_swscanf
-GO(__isoc99_vfscanf, iFppp)
+GOM(__isoc99_vfscanf, iFppp)
 // __isoc99_vfwscanf
 // __isoc99_vscanf
-GO(__isoc99_vsscanf, iFppp) // TODO: check if ok
+GO(__isoc99_vsscanf, iFppp)
 // __isoc99_vswscanf
 // __isoc99_vwscanf
 // __isoc99_wscanf
+#endif
 GO(isprint, iFi)
 // __isprint_l
 // isprint_l    // Weak
@@ -1061,7 +1076,7 @@ DATAV(__malloc_initialize_hook, 4)
 // malloc_set_state // Weak
 // malloc_stats // Weak
 GOW(malloc_trim, iFu)
-GOW(malloc_usable_size, uFp)
+GOW(malloc_usable_size, LFp)
 GOW(mallopt, iFii)  // Weak
 // mallwatch    // type B
 GO(mblen, iFpu)
@@ -1070,7 +1085,7 @@ GO(__mbrlen, uFpup)
 GOW(mbrtowc, uFppup)
 GO(__mbrtowc, uFppup)
 GOW(mbsinit, iFp)
-GOW(mbsnrtowcs, uFppuup)
+GOW(mbsnrtowcs, LFppLLp)
 // __mbsnrtowcs_chk
 GOW(mbsrtowcs, uFppup)
 // __mbsrtowcs_chk
@@ -1129,7 +1144,7 @@ GOW(mount, iFpppup)
 GOM(mprotect, iFEpLi)
 // mrand48
 // mrand48_r
-GOW(mremap, pFpuuip)	// 5th hidden paramerer "void* new_addr" if flags is MREMAP_FIXED
+GOW(mremap, pFpuuip)	// 5th hidden paramerer "void* new_addr" if flags is MREMAP_FIXED // does this need some GOM for protection handling?
 GO(msgctl, iFiip)
 GOW(msgget, iFpi)
 GOW(msgrcv, lFipLli)
@@ -1266,7 +1281,7 @@ GO(posix_spawn_file_actions_destroy, iFp)
 GO(posix_spawn_file_actions_init, iFp)
 GOM(posix_spawnp, iFEpppppp)
 GO(ppoll, iFpupp)
-GOW(prctl, iFiuuuu)
+GOW(prctl, iFiLLLL)
 GOW(pread, lFipLl)
 GOW(pread64, lFipLI)
 // __pread64    // Weak
@@ -1363,7 +1378,7 @@ GO(__realpath_chk, pFppu)
 GOW(re_compile_pattern, pFpup)
 GO(recv, lFipLi)
 GO(__recv_chk, iFipuui)
-GOW(recvfrom, iFipuipp)
+GOW(recvfrom, lFipLipp)
 // __recvfrom_chk
 GOM(recvmmsg, iFEipuup)    // actual recvmmsg is glibc 2.12+. The syscall is Linux 2.6.33+, so use syscall...
 GOW(recvmsg, lFipi)
@@ -1383,7 +1398,11 @@ GO(removexattr, iFpp)
 // remque
 GO(rename, iFpp)
 GO(renameat, iFipip)
+#ifdef PANDORA
+GOM(renameat2, iFipipu)
+#else
 GO(renameat2, iFipipu)
+#endif
 // _res // type B
 GOW(re_search, iFppiiip)
 GOW(re_search_2, iFppipiiipi)
@@ -1456,14 +1475,18 @@ GO2(secure_getenv, pFp, getenv)     // secure_getenv either
 GO(seekdir, vFpi)
 GOW(select, iFipppp)
 GO(__select, iFipppp)
-GO(semctl, iFiiippppp)  // use vararg after the 3 i
+#ifdef POWERPCLE
+GOM(semctl, iFEiiiN)  // use vararg after the 3 i
+#else
+GO(semctl, iFiiiN)
+#endif
 GOW(semget, iFuii)
-GOW(semop, iFipu)
+GOW(semop, iFipL)
 GO(semtimedop, iFipup)
 GOW(send, lFipLi)
 // __send   // Weak
-GO(sendfile, iFiipu)
-GO(sendfile64, iFiipu)
+GO(sendfile, lFiipL)
+GO(sendfile64, lFiipL)
 GOW(sendmsg, lFipi)
 GOM(__sendmmsg, iFEipuu)    // actual __sendmmsg is glibc 2.14+. The syscall is Linux 3.0+, so use syscall...
 GOW(sendto, iFipuipu)
@@ -1589,7 +1612,11 @@ GO(srand48, vFi)
 // srand48_r    // Weak
 GOW(srandom, vFu)
 GOW(srandom_r, iFup)
+#ifdef POWERPCLE
+GOM(sscanf, iFppV)
+#else
 GO2(sscanf, iFppV, vsscanf)     // sscanf va_list is only pointer, no realign to do
+#endif
 // ssignal  // Weak
 // sstk
 GOM(__stack_chk_fail, vFE)
@@ -1898,7 +1925,11 @@ GOM(__vsnprintf, iFEpuppp)  // Weak
 GOM(__vsnprintf_chk, iFEpuvvppp)
 GOM(vsprintf, iFEpppp) // Weak
 GOM(__vsprintf_chk, iFEpvvppp)   // ignoring flag and slen, just use vsprintf in fact
+#ifdef POWERPCLE
+GOM(vsscanf, iFppp)
+#else
 GO(vsscanf, iFppp)
+#endif
 // __vsscanf    // Weak
 GOM(vswprintf, iFEpuppp)    // Weak
 GOM(__vswprintf_chk, iFEpuvvppp)    // Weak
@@ -2013,10 +2044,10 @@ GO(__wctype_l, uFpp)
 GOW(wctype_l, uFpp)
 GO(wcwidth, iFu)
 GOW(wmemchr, pFpiu)
-GO(wmemcmp, iFppu)
-GOW(wmemcpy, pFppu)
-GO(__wmemcpy_chk, pFppuu)
-GOW(wmemmove, pFppu)
+GO(wmemcmp, iFppL)
+GOW(wmemcpy, pFppL)
+GO(__wmemcpy_chk, pFppLL)
+GOW(wmemmove, pFppL)
 // __wmemmove_chk
 // wmempcpy // Weak
 // __wmempcpy_chk

@@ -39,10 +39,13 @@ void FreeLibrarian(lib_t **maplib)
     if(!maplib || !*maplib)
         return;
     
-    if((*maplib)->ownlibs)
+    if((*maplib)->ownlibs) {
+        printf_log(LOG_DEBUG, "Closing %d libs from maplib %p\n", (*maplib)->libsz, *maplib);
         for (int i=0; i<(*maplib)->libsz; ++i) {
+            printf_log(LOG_DEBUG, "Unloading %s\n", (*maplib)->libraries[i].lib->name);
             Free1Library(&(*maplib)->libraries[i].lib);
         }
+    }
     free((*maplib)->libraries);
     (*maplib)->libraries = NULL;
 
@@ -386,21 +389,18 @@ elfheader_t* GetGlobalSymbolElf(lib_t *maplib, const char* name)
     uintptr_t start = 0;
     uintptr_t end = 0;
     if(GetSymbolStartEnd(maplib->mapsymbols, name, &start, &end))
-        if(start)
-            return maplib->context->elfs[0];
+        return maplib->context->elfs[0];
     if(GetSymbolStartEnd(maplib->weaksymbols, name, &start, &end))
-        if(start)
-            return maplib->context->elfs[0];
+        return maplib->context->elfs[0];
     for(int i=0; i<maplib->libsz; ++i) {
-        if(GetLibSymbolStartEnd(maplib->libraries[i].lib, name, &start, &end))
-            if(start) {
-                int idx = GetElfIndex(maplib->libraries[i].lib);
-                if(idx==-1) {
-                    printf_log(LOG_NONE, "Warning, getting Elf info for a native symbol \"%s\" from lib \"%s\"\n", name, GetNameLib(maplib->libraries[i].lib));
-                    return NULL;
-                }
-                return maplib->context->elfs[idx];
+        if(GetLibSymbolStartEnd(maplib->libraries[i].lib, name, &start, &end)) {
+            int idx = GetElfIndex(maplib->libraries[i].lib);
+            if(idx==-1) {
+                printf_log(LOG_NONE, "Warning, getting Elf info for a native symbol \"%s\" from lib \"%s\"\n", name, GetNameLib(maplib->libraries[i].lib));
+                return NULL;
             }
+            return maplib->context->elfs[idx];
+        }
     }
     // nope, not found
     return NULL;
@@ -417,6 +417,19 @@ int GetGlobalNoWeakSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* st
                 return 1;
     // nope, not found
     return 0;
+}
+
+int IsGlobalNoWeakSymbolInNative(lib_t *maplib, const char* name)
+{
+    uintptr_t start, end;
+    for(int i=0; i<maplib->libsz; ++i)
+        if(GetElfIndex(maplib->libraries[i].lib)==-1)
+            if(GetLibNoWeakSymbolStartEnd(maplib->libraries[i].lib, name, &start, &end))
+                if(start || end)
+                    return 1;
+    // nope, not found
+    return 0;
+
 }
 
 int GetLocalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t *self)
@@ -557,6 +570,8 @@ void AddOffsetSymbol(lib_t *maplib, void* offs, const char* name)
 
 const char* GetNameOffset(lib_t *maplib, void* offs)
 {
+    if(!maplib || !maplib->mapoffsets)
+        return NULL;
     khint_t k = kh_get(mapoffsets, maplib->mapoffsets, (uintptr_t)offs);
     if (k!=kh_end(maplib->mapoffsets))
         return kh_value(maplib->mapoffsets, k);

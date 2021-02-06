@@ -27,6 +27,7 @@
 #include "callback.h"
 #include "dynarec.h"
 #include "box86stack.h"
+#include "custommem.h"
 #ifdef DYNAREC
 #include "dynablock.h"
 #endif
@@ -64,10 +65,10 @@ void FreeElfHeader(elfheader_t** head)
         return;
     elfheader_t *h = *head;
 #ifdef DYNAREC
-    if(h->text) {
+    /*if(h->text) {
         dynarec_log(LOG_INFO, "Free Dynarec block for %s\n", h->path);
-        cleanDBFromAddressRange(h->text, h->textsz, 1);
-    }
+        cleanDBFromAddressRange(my_context, h->text, h->textsz, 1);
+    }*/ // will be free at the end, no need to free it now
 #endif
     free(h->name);
     free(h->path);
@@ -195,6 +196,7 @@ int AllocElfMemory(box86context_t* context, elfheader_t* head, int mainbin)
                     ++n;
                 }
             }
+        head->multiblock_n = n; // might be less in fact
         for (int i=0; i<head->multiblock_n; ++i) {
             
             printf_log(LOG_DEBUG, "Allocating 0x%x memory @%p for Elf \"%s\"\n", head->multiblock_size[i], (void*)head->multiblock_offs[i], head->name);
@@ -206,6 +208,7 @@ int AllocElfMemory(box86context_t* context, elfheader_t* head, int mainbin)
                 printf_log(LOG_NONE, "Cannot create memory map (@%p 0x%x/0x%x) for elf \"%s\"\n", (void*)head->multiblock_offs[i], head->multiblock_size[i], head->align, head->name);
                 return 1;
             }
+            setProtection((uintptr_t)p, head->multiblock_size[i], PROT_READ | PROT_WRITE | PROT_EXEC);
             head->multiblock[i] = p;
             if(p<(void*)head->memory)
                 head->memory = (char*)p;
@@ -221,6 +224,7 @@ int AllocElfMemory(box86context_t* context, elfheader_t* head, int mainbin)
             printf_log(LOG_NONE, "Cannot create memory map (@%p 0x%x/0x%x) for elf \"%s\"\n", (void*)offs, head->memsz, head->align, head->name);
             return 1;
         }
+        setProtection((uintptr_t)p, head->memsz, PROT_READ | PROT_WRITE | PROT_EXEC);
         head->memory = p;
         memset(p, 0, head->memsz);
         head->delta = (intptr_t)p - (intptr_t)head->vaddr;
@@ -264,13 +268,14 @@ int LoadElfMemory(FILE* f, box86context_t* context, elfheader_t* head)
                     printf_log(LOG_NONE, "Fail to read PT_LOAD part #%d (size=%d)\n", i, e->p_filesz);
                     return 1;
                 }
+            }
 #ifdef DYNAREC
-                if(e->p_flags & PF_X) {
-                    dynarec_log(LOG_DEBUG, "Add ELF eXecutable Memory %p:%p\n", dest, (void*)e->p_memsz);
-                    addDBFromAddressRange((uintptr_t)dest, e->p_memsz, 0);
-                }
+            if(e->p_flags & PF_X) {
+                dynarec_log(LOG_DEBUG, "Add ELF eXecutable Memory %p:%p\n", dest, (void*)e->p_memsz);
+                addDBFromAddressRange((uintptr_t)dest, e->p_memsz);
+            }
 #endif
-            } 
+
             // zero'd difference between filesz and memsz
             /*if(e->p_filesz != e->p_memsz)
                 memset(dest+e->p_filesz, 0, e->p_memsz - e->p_filesz);*/    //block is already 0'd at creation
@@ -321,6 +326,26 @@ int ReloadElfMemory(FILE* f, box86context_t* context, elfheader_t* head)
     // TLS data are just a copy, no need to re-load it
     return 0;
 }
+int FindR386COPYRel(elfheader_t* h, const char* name, uintptr_t *offs, uint32_t** p)
+{
+    if(!h)
+        return 0;
+    Elf32_Rel * rel = (Elf32_Rel *)(h->rel + h->delta);
+    if(!h->rel)
+        return 0;
+    int cnt = h->relsz / h->relent;
+    for (int i=0; i<cnt; ++i) {
+        int t = ELF32_R_TYPE(rel[i].r_info);
+        Elf32_Sym *sym = &h->DynSym[ELF32_R_SYM(rel[i].r_info)];
+        const char* symname = SymName(h, sym);
+        if(!strcmp(symname, name) && t==R_386_COPY) {
+            *offs = sym->st_value + h->delta;
+            *p = (uint32_t*)(rel[i].r_offset + h->delta);
+            return 1;
+        }
+    }
+    return 0;
+}
 
 int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cnt, Elf32_Rel *rel)
 {
@@ -333,6 +358,7 @@ int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cn
         uint32_t *p = (uint32_t*)(rel[i].r_offset + head->delta);
         uintptr_t offs = 0;
         uintptr_t end = 0;
+        uintptr_t tmp = 0;
         elfheader_t* h_tls = head;
         if(bind==STB_LOCAL) {
             offs = sym->st_value + head->delta;
@@ -354,6 +380,7 @@ int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cn
             }
         }
         uintptr_t globoffs, globend;
+        uint32_t* globp;
         int delta;
         switch(t) {
             case R_386_NONE:
@@ -390,18 +417,33 @@ int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cn
                     *p += offs;
                 break;
             case R_386_GLOB_DAT:
-                // Look for same symbol already loaded but not in self (so no need for local_maplib here)
-                if (GetGlobalNoWeakSymbolStartEnd(maplib, symname, &globoffs, &globend)) {
-                    offs = globoffs;
-                    end = globend;
-                }
-                if (!offs) {
-                    if(strcmp(symname, "__gmon_start__"))
-                        printf_log(LOG_NONE, "Error: Global Symbol %s not found, cannot apply R_386_GLOB_DAT @%p (%p) in %s\n", symname, p, *(void**)p, head->name);
-//                    return -1;
+                if(!IsGlobalNoWeakSymbolInNative(maplib, symname) && FindR386COPYRel(my_context->elfs[0], symname, &globoffs, &globp)) {
+                    // set global offs / size for the symbol
+                    offs = sym->st_value + head->delta;
+                    end = offs + sym->st_size;
+                    printf_log(LOG_DUMP, "Apply %s R_386_GLOB_DAT with R_386_COPY @%p/%p (%p/%p -> %p/%p) on sym=%s\n", (bind==STB_LOCAL)?"Local":"Global", p, globp, (void*)(p?(*p):0), (void*)(globp?(*globp):0), (void*)offs, (void*)globoffs, symname);
+                    memmove(globp, (void*)offs, sym->st_size);
+                    if(LOG_DUMP<=box86_log) {
+                        uint32_t*k = (uint32_t*)globp;
+                        for (int i=0; i<((sym->st_size>128)?128:sym->st_size); i+=4, ++k)
+                            printf_log(LOG_DUMP, "%s0x%08X", i?" ":"", *k);
+                        printf_log(LOG_DUMP, "%s)\n", (sym->st_size>128)?" ...":"");
+                    }
+                    *p = globoffs;
                 } else {
-                    printf_log(LOG_DUMP, "Apply %s R_386_GLOB_DAT @%p (%p -> %p) on sym=%s\n", (bind==STB_LOCAL)?"Local":"Global", p, (void*)(p?(*p):0), (void*)offs, symname);
-                    *p = offs;
+                    // Look for same symbol already loaded but not in self (so no need for local_maplib here)
+                    if (GetGlobalNoWeakSymbolStartEnd(maplib, symname, &globoffs, &globend)) {
+                        offs = globoffs;
+                        end = globend;
+                    }
+                    if (!offs) {
+                        if(strcmp(symname, "__gmon_start__"))
+                            printf_log(LOG_NONE, "Error: Global Symbol %s not found, cannot apply R_386_GLOB_DAT @%p (%p) in %s\n", symname, p, *(void**)p, head->name);
+    //                    return -1;
+                    } else {
+                        printf_log(LOG_DUMP, "Apply %s R_386_GLOB_DAT @%p (%p -> %p) on sym=%s\n", (bind==STB_LOCAL)?"Local":"Global", p, (void*)(p?(*p):0), (void*)offs, symname);
+                        *p = offs;
+                    }
                 }
                 break;
             case R_386_RELATIVE:
@@ -459,8 +501,13 @@ int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cn
                 }
                 break;
             case R_386_JMP_SLOT:
-                // apply immediatly for gobject closure marshal or for LOCAL binding
-                if(bind==STB_LOCAL || ((symname && strstr(symname, "g_cclosure_marshal_")==symname))) {
+                // apply immediatly for gobject closure marshal or for LOCAL binding. Also, apply immediatly if it doesn't jump in the got
+                tmp = (uintptr_t)(*p);
+                if (bind==STB_LOCAL 
+                  || ((symname && strstr(symname, "g_cclosure_marshal_")==symname)) 
+                  || !tmp
+                  || !((tmp>=head->plt && tmp<head->plt_end) || (tmp>=head->gotplt && tmp<head->gotplt_end))
+                  ) {
                     if (!offs) {
                         if(bind==STB_WEAK) {
                             printf_log(LOG_INFO, "Warning: Weak Symbol %s not found, cannot apply R_386_JMP_SLOT @%p (%p)\n", symname, p, *(void**)p);
@@ -483,18 +530,22 @@ int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, elfheader_t* head, int cn
                 break;
             case R_386_COPY:
                 if(offs) {
-                    offs = 0;
-                    if(local_maplib)
-                        GetNoSelfSymbolStartEnd(local_maplib, symname, &offs, &end, head);
-                    if(!offs)
-                        GetNoSelfSymbolStartEnd(maplib, symname, &offs, &end, head);   // get original copy if any
-                    printf_log(LOG_DUMP, "Apply %s R_386_COPY @%p with sym=%s, @%p size=%d (", (bind==STB_LOCAL)?"Local":"Global", p, symname, (void*)offs, sym->st_size);
-                    memmove(p, (void*)offs, sym->st_size);
-                    if(LOG_DUMP<=box86_log) {
-                        uint32_t*k = (uint32_t*)p;
-                        for (int i=0; i<((sym->st_size>128)?128:sym->st_size); i+=4, ++k)
-                            printf_log(LOG_DUMP, "%s0x%08X", i?" ":"", *k);
-                        printf_log(LOG_DUMP, "%s)\n", (sym->st_size>128)?" ...":"");
+                    if(*p==0) {
+                        offs = 0;
+                        if(local_maplib)
+                            GetNoSelfSymbolStartEnd(local_maplib, symname, &offs, &end, head);
+                        if(!offs)
+                            GetNoSelfSymbolStartEnd(maplib, symname, &offs, &end, head);   // get original copy if any
+                        printf_log(LOG_DUMP, "Apply %s R_386_COPY @%p with sym=%s, @%p size=%d (", (bind==STB_LOCAL)?"Local":"Global", p, symname, (void*)offs, sym->st_size);
+                        memmove(p, (void*)offs, sym->st_size);
+                        if(LOG_DUMP<=box86_log) {
+                            uint32_t*k = (uint32_t*)p;
+                            for (int i=0; i<((sym->st_size>128)?128:sym->st_size); i+=4, ++k)
+                                printf_log(LOG_DUMP, "%s0x%08X", i?" ":"", *k);
+                            printf_log(LOG_DUMP, "%s)\n", (sym->st_size>128)?" ...":"");
+                        }
+                    } else {
+                        printf_log(LOG_DUMP, "Already applied %s R_386_COPY @%p with sym=%s, @%p size=%d\n", (bind==STB_LOCAL)?"Local":"Global", p, symname, (void*)offs, sym->st_size);
                     }
                 } else {
                     printf_log(LOG_NONE, "Error: Symbol %s not found, cannot apply R_386_COPY @%p (%p) in %s\n", symname, p, *(void**)p, head->name);
@@ -682,7 +733,7 @@ void AddSymbols(lib_t *maplib, kh_mapsymbols_t* mapsymbols, kh_mapsymbols_t* wea
         int vis = h->SymTab[i].st_other&0x3;
         if((type==STT_OBJECT || type==STT_FUNC || type==STT_COMMON || type==STT_TLS  || type==STT_NOTYPE) 
         && (vis==STV_DEFAULT || vis==STV_PROTECTED) && (h->SymTab[i].st_shndx!=0)) {
-            if(bind==10/*STB_GNU_UNIQUE*/ && FindGlobalSymbol(maplib, symname))
+            if((bind==10/*STB_GNU_UNIQUE*/ || bind==STB_GLOBAL) && FindGlobalSymbol(maplib, symname))
                 continue;
             uintptr_t offs = (type==STT_TLS)?h->SymTab[i].st_value:(h->SymTab[i].st_value + h->delta);
             uint32_t sz = h->SymTab[i].st_size;
@@ -707,7 +758,7 @@ void AddSymbols(lib_t *maplib, kh_mapsymbols_t* mapsymbols, kh_mapsymbols_t* wea
         //st_shndx==65521 means ABS value
         if((type==STT_OBJECT || type==STT_FUNC || type==STT_COMMON || type==STT_TLS  || type==STT_NOTYPE) 
         && (vis==STV_DEFAULT || vis==STV_PROTECTED) && (h->DynSym[i].st_shndx!=0 && h->DynSym[i].st_shndx<=65521)) {
-            if(bind==10/*STB_GNU_UNIQUE*/ && FindGlobalSymbol(maplib, symname))
+            if((bind==10/*STB_GNU_UNIQUE*/ || bind==STB_GLOBAL) && FindGlobalSymbol(maplib, symname))
                 continue;
             uintptr_t offs = (type==STT_TLS)?h->DynSym[i].st_value:(h->DynSym[i].st_value + h->delta);
             uint32_t sz = h->DynSym[i].st_size;
@@ -759,12 +810,27 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, needed_libs_t* neededlibs, int
                 if(rpath!=rpathref)
                     free(rpath);
                 rpath = tmp;
+                free(origin);
+            }
+            while(strstr(rpath, "${ORIGIN}")) {
+                char* origin = strdup(h->path);
+                char* p = strrchr(origin, '/');
+                if(p) *p = '\0';    // remove file name to have only full path, without last '/'
+                char* tmp = (char*)calloc(1, strlen(rpath)-strlen("${ORIGIN}")+strlen(origin)+1);
+                p = strstr(rpath, "${ORIGIN}");
+                memcpy(tmp, rpath, p-rpath);
+                strcat(tmp, origin);
+                strcat(tmp, p+strlen("${ORIGIN}"));
+                if(rpath!=rpathref)
+                    free(rpath);
+                rpath = tmp;
+                free(origin);
             }
             if(strchr(rpath, '$')) {
                 printf_log(LOG_INFO, "BOX86: Warning, RPATH with $ variable not supported yet (%s)\n", rpath);
             } else {
                 printf_log(LOG_DEBUG, "Prepending path \"%s\" to BOX86_LD_LIBRARY_PATH\n", rpath);
-                PrependPath(rpath, &box86->box86_ld_lib, 1);
+                PrependList(&box86->box86_ld_lib, rpath, 1);
             }
             if(rpath!=rpathref)
                 free(rpath);
@@ -787,12 +853,27 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, needed_libs_t* neededlibs, int
     return 0;
 }
 
+int ElfCheckIfUseTCMallocMinimal(elfheader_t* h)
+{
+    if(!h)
+        return 0;
+    for (int i=0; i<h->numDynamic; ++i)
+        if(h->Dynamic[i].d_tag==DT_NEEDED) {
+            char *needed = h->DynStrTab+h->delta+h->Dynamic[i].d_un.d_val;
+            if(!strcmp(needed, "libtcmalloc_minimal.so.4")) // tcmalloc needs to be the 1st lib loaded
+                return 1;
+            else
+                return 0;
+        }
+    return 0;
+}
+
 void RunElfInit(elfheader_t* h, x86emu_t *emu)
 {
     if(!h || h->init_done)
         return;
     // reset Segs Cache
-    memset(emu->segs_clean, 0, sizeof(emu->segs_clean));
+    memset(emu->segs_serial, 0, sizeof(emu->segs_serial));
     uintptr_t p = h->initentry + h->delta;
     box86context_t* context = GetEmuContext(emu);
     if(context->deferedInit) {
@@ -980,24 +1061,19 @@ void* GetTLSPointer(box86context_t* context, elfheader_t* h)
 #ifdef DYNAREC
 dynablocklist_t* GetDynablocksFromAddress(box86context_t *context, uintptr_t addr)
 {
-    // this is one is fast, so start with that
-    dynablocklist_t* ret = getDBFromAddress(addr);
+    // if we are here, the there is not block in standard "space"
+    /*dynablocklist_t* ret = getDBFromAddress(addr);
     if(ret) {
         return ret;
+    }*/
+    if(box86_dynarec_forced) {
+        addDBFromAddressRange(addr, 1);
+        return getDB(addr>>DYNAMAP_SHIFT);
     }
-    // nope
-    if(addr>0x100)
-        if((*(uint8_t*)addr)==0xCC || (((*(uint8_t*)addr)==0xC3 || (*(uint8_t*)addr)==0xC2) /*&& (*(uint8_t*)(addr-11))==0xCC*/) )
-            return context->dynablocks;
-    if(box86_dynarec_forced)
-        return context->dynablocks;
-    // check if the adress has an alternate one
-    if(hasAlternate((void*)addr))
-        return context->dynablocks;
     //check if address is in an elf... if yes, grant a block (should I warn)
     Dl_info info;
     if(dladdr((void*)addr, &info)) {
-        printf_log(LOG_INFO, "Address %p is in a native Elf memory space (function \"%s\" in %s)\n", (void*)addr, info.dli_sname, info.dli_fname);
+        dynarec_log(LOG_INFO, "Address %p is in a native Elf memory space (function \"%s\" in %s)\n", (void*)addr, info.dli_sname, info.dli_fname);
         return NULL;
     }
     dynarec_log(LOG_INFO, "Address %p not found in Elf memory and is not a native call wrapper\n", (void*)addr);
@@ -1012,29 +1088,49 @@ typedef struct my_dl_phdr_info_s {
     int             dlpi_phnum;
 } my_dl_phdr_info_t;
 
-static int dl_iterate_phdr_callback(x86emu_t *emu, my_dl_phdr_info_t *info, size_t size, void* data)
+static int dl_iterate_phdr_callback(x86emu_t *emu, void* F, my_dl_phdr_info_t *info, size_t size, void* data)
 {
-    SetCallbackArgs(emu, 2, info, size);
-    int ret = RunCallback(emu);
+    int ret = RunFunctionWithEmu(emu, 0, (uintptr_t)F, 3, info, size, data);
     return ret;
 }
 
-static int dl_iterate_phdr_native(struct dl_phdr_info* info, size_t size, void* data)
-{
-    if(!info->dlpi_name)
-        return 0;
-    if(!info->dlpi_name[0]) // don't send informations about box86 itself
-        return 0;
+#define SUPER() \
+GO(0)   \
+GO(1)   \
+GO(2)   \
+GO(3)   \
+GO(4)
 
-    x86emu_t* emu = (x86emu_t*)data;
-    SetCallbackArgs(emu, 2, info, size);
-    int ret = RunCallback(emu);
-    return ret;
+// dl_iterate_phdr ...
+#define GO(A)   \
+static uintptr_t my_dl_iterate_phdr_fct_##A = 0;                            \
+static int my_dl_iterate_phdr_##A(struct dl_phdr_info* a, size_t b, void* c)\
+{                                                                           \
+    if(!a->dlpi_name)                                                       \
+        return 0;                                                           \
+    if(!a->dlpi_name[0]) /*don't send informations about box86 itself*/     \
+        return 0;                                                           \
+    return RunFunction(my_context, my_dl_iterate_phdr_fct_##A, 3, a, b, c); \
 }
+SUPER()
+#undef GO
+static void* find_dl_iterate_phdr_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_dl_iterate_phdr_fct_##A == (uintptr_t)fct) return my_dl_iterate_phdr_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_dl_iterate_phdr_fct_##A == 0) {my_dl_iterate_phdr_fct_##A = (uintptr_t)fct; return my_dl_iterate_phdr_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for elfloader dl_iterate_phdr callback\n");
+    return NULL;
+}
+#undef SUPER
 
 EXPORT int my_dl_iterate_phdr(x86emu_t *emu, void* F, void *data) {
     printf_log(LOG_INFO, "Warning: call to partially implemented dl_iterate_phdr(%p, %p)\n", F, data);
-    x86emu_t* cbemu = AddSharedCallback(emu, (uintptr_t)F, 3, NULL, NULL, data, NULL);
     box86context_t *context = GetEmuContext(emu);
     const char* empty = "";
     int ret = 0;
@@ -1044,15 +1140,12 @@ EXPORT int my_dl_iterate_phdr(x86emu_t *emu, void* F, void *data) {
         info.dlpi_name = idx?context->elfs[idx]->name:empty;    //1st elf is program, and this one doesn't get a name
         info.dlpi_phdr = context->elfs[idx]->PHEntries;
         info.dlpi_phnum = context->elfs[idx]->numPHEntries;
-        if((ret = dl_iterate_phdr_callback(cbemu, &info, sizeof(info), data))) {
-            FreeCallback(cbemu);
+        if((ret = dl_iterate_phdr_callback(emu, F, &info, sizeof(info), data))) {
             return ret;
         }
     }
     // and now, go on native version
-    ret = dl_iterate_phdr(dl_iterate_phdr_native, cbemu);
-    // all done
-    FreeCallback(cbemu);
+    ret = dl_iterate_phdr(find_dl_iterate_phdr_Fct(F), data);
     return ret;
 }
 

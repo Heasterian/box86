@@ -47,7 +47,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_add16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_add16(dyn, ninst, x1, x2, x14, x3, (wb1 && (wback==x3))?1:0);
             EWBACK;
             break;
         case 0x03:
@@ -56,7 +56,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_add16(dyn, ninst, x1, x2, x3, x12, 0);
+            emit_add16(dyn, ninst, x1, x2, x3, x14, 0);
             GWBACK;
             break;
         case 0x05:
@@ -64,7 +64,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_PENDING);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_add16c(dyn, ninst, x1, i32, x3, x12);
+            emit_add16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
         case 0x06:
@@ -83,7 +83,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             STRH_IMM8(x2, x1, 0);
             ADD_IMM8(xESP, xESP, 2);
             MOVW(x1, 0);
-            STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_clean[_ES]));
+            STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_serial[_ES]));
             break;
 
         case 0x09:
@@ -92,7 +92,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_or16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_or16(dyn, ninst, x1, x2, x14, x2);
             EWBACK;
             break;
         case 0x0B:
@@ -101,7 +101,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_or16(dyn, ninst, x1, x2, x12, x3, 0);
+            emit_or16(dyn, ninst, x1, x2, x14, x3);
             GWBACK;
             break;
         case 0x0D:
@@ -109,7 +109,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_or16c(dyn, ninst, x1, i32, x3, x12);
+            emit_or16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
                 
@@ -123,7 +123,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_adc16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_adc16(dyn, ninst, x1, x2, x14, x3, (wb1 && (wback==x3))?1:0);
             EWBACK;
             break;
         case 0x13:
@@ -133,7 +133,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_adc16(dyn, ninst, x1, x2, x12, x3, 0);
+            emit_adc16(dyn, ninst, x1, x2, x14, x3, 0);
             GWBACK;
             break;
         case 0x15:
@@ -142,7 +142,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_adc16c(dyn, ninst, x1, i32, x3, x12);
+            emit_adc16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
 
@@ -153,7 +153,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_sbb16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_sbb16(dyn, ninst, x1, x2, x14, x3, (wb1 && (wback==x3))?1:0);
             EWBACK;
             break;
         case 0x1B:
@@ -163,7 +163,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_sbb16(dyn, ninst, x1, x2, x12, x3, 0);
+            emit_sbb16(dyn, ninst, x1, x2, x14, x3, 0);
             GWBACK;
             break;
         case 0x1D:
@@ -172,7 +172,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i16 = F16;
             UXTH(x1, xEAX, 0);
-            emit_sbb16c(dyn, ninst, x1, i16, x3, x12);
+            emit_sbb16c(dyn, ninst, x1, i16, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
 
@@ -182,7 +182,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_and16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_and16(dyn, ninst, x1, x2, x14, x2);
             EWBACK;
             break;
         case 0x23:
@@ -191,7 +191,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_and16(dyn, ninst, x1, x2, x3, x12, 0);
+            emit_and16(dyn, ninst, x1, x2, x3, x14);
             GWBACK;
             break;
         case 0x25:
@@ -199,7 +199,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_and16c(dyn, ninst, x1, i32, x3, x12);
+            emit_and16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
         case 0x26:
@@ -213,7 +213,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_sub16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_sub16(dyn, ninst, x1, x2, x14, x3, (wb1 && (wback==x3))?1:0);
             EWBACK;
             break;
         case 0x2B:
@@ -222,7 +222,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_sub16(dyn, ninst, x1, x2, x3, x12, 0);
+            emit_sub16(dyn, ninst, x1, x2, x3, x14, 0);
             GWBACK;
             break;
         case 0x2D:
@@ -230,7 +230,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_sub16c(dyn, ninst, x1, i32, x3, x12);
+            emit_sub16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
 
@@ -240,7 +240,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_xor16(dyn, ninst, x1, x2, x12, x3, (wb1 && (wback==x3))?1:0);
+            emit_xor16(dyn, ninst, x1, x2, x14, x2);
             EWBACK;
             break;
         case 0x33:
@@ -249,7 +249,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_xor16(dyn, ninst, x1, x2, x3, x12, 0);
+            emit_xor16(dyn, ninst, x1, x2, x3, x14);
             GWBACK;
             break;
         case 0x35:
@@ -257,7 +257,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL, SF_SET);
             i32 = F16;
             UXTH(x1, xEAX, 0);
-            emit_xor16c(dyn, ninst, x1, i32, x3, x12);
+            emit_xor16c(dyn, ninst, x1, i32, x3, x14);
             BFI(xEAX, x1, 0, 16);
             break;
 
@@ -267,7 +267,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x2);
             GETEW(x1);
-            emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+            emit_cmp16(dyn, ninst, x1, x2, x3, x14);
             break;
         case 0x3B:
             INST_NAME("CMP Gw, Ew");
@@ -275,7 +275,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETGW(x1);
             GETEW(x2);
-            emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+            emit_cmp16(dyn, ninst, x1, x2, x3, x14);
             break;
         case 0x3D:
             INST_NAME("CMP AX, Iw");
@@ -283,7 +283,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             i32 = F16;
             MOVW(x2, i32);
             UXTH(x1, xEAX, 0);
-            emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+            emit_cmp16(dyn, ninst, x1, x2, x3, x14);
             break;
 
         case 0x40:
@@ -298,7 +298,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL&~X_CF, SF_SUBSET);
             gd = xEAX+(opcode&7);
             UXTH(x1, gd, 0);
-            emit_inc16(dyn, ninst, x1, x3, x12);
+            emit_inc16(dyn, ninst, x1, x3, x14);
             BFI(gd, x1, 0, 16);
             break;
         case 0x48:
@@ -313,7 +313,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SETFLAGS(X_ALL&~X_CF, SF_SUBSET);
             gd = xEAX+(opcode&7);
             UXTH(x1, gd, 0);
-            emit_dec16(dyn, ninst, x1, x3, x12);
+            emit_dec16(dyn, ninst, x1, x3, x14);
             BFI(gd, x1, 0, 16);
             break;
         case 0x50:
@@ -420,7 +420,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_add16c(dyn, ninst, ed, i16, x2, x12);
+                    emit_add16c(dyn, ninst, ed, i16, x2, x14);
                     EWBACK;
                     break;
                 case 1: //OR
@@ -428,7 +428,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_or16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_or16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 2: //ADC
@@ -437,7 +437,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_adc16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_adc16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 3: //SBB
@@ -446,7 +446,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_sbb16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_sbb16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 4: //AND
@@ -454,7 +454,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_and16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_and16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 5: //SUB
@@ -462,7 +462,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_sub16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_sub16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 6: //XOR
@@ -470,7 +470,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
-                    emit_xor16c(dyn, ninst, x1, i16, x2, x12);
+                    emit_xor16c(dyn, ninst, x1, i16, x2, x14);
                     EWBACK;
                     break;
                 case 7: //CMP
@@ -480,9 +480,9 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     if(opcode==0x81) i16 = F16S; else i16 = F8S;
                     if(i16) {
                         MOVW(x2, i16);
-                        emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+                        emit_cmp16(dyn, ninst, x1, x2, x3, x14);
                     } else
-                        emit_cmp16_0(dyn, ninst, x1, x3, x12);
+                        emit_cmp16_0(dyn, ninst, x1, x3, x14);
                     break;
             }
             break;
@@ -493,7 +493,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             nextop = F8;
             GETEW(x1);
             GETGW(x2);
-            emit_test16(dyn, ninst, x1, x2, x3, x12);
+            emit_test16(dyn, ninst, x1, x2, x3, x14);
             break;
 
         case 0x89:
@@ -553,7 +553,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 STRH_REG(x1, xEmu, x2);
             }
             MOVW(x1, 0);
-            STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_clean[(nextop&0x38)>>3]));
+            STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_serial[(nextop&0x38)>>3]));
             break;
 
         case 0x90:
@@ -580,23 +580,24 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
         case 0x99:
             INST_NAME("CWD");
             SXTH(x1, xEAX, 0);
-            BFI(xEDX, x1, 16, 16);
+            MOV_REG_LSR_IMM5(x1, x1, 16);
+            BFI(xEDX, x1, 0, 16);
             break;
 
         case 0x9C:
             INST_NAME("PUSHF (16b)");
             READFLAGS(X_ALL);
-            CALL(PackFlags, -1, 0);
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, packed_eflags.x32));
-            STRHB_IMM8(x1, xESP, -2);
+            STRHB_IMM8(xFlags, xESP, -2);
             break;
         case 0x9D:
             INST_NAME("POPF (16b)");
             SETFLAGS(X_ALL, SF_SET);    // lower 16bits is all flags handled in dynarec
-            LDRHA_IMM8(x1, xESP, 2);
-            CALL(arm_popf16, -1, 0);
-            MOVW(x1, d_none);
-            STR_IMM9(x1, xEmu, offsetof(x86emu_t, df));
+            LDRHA_IMM8(x2, xESP, 2);
+            MOV32(x1, 0x7FD7);
+            AND_REG_LSL_IMM5(x2, x2, x1, 0);
+            ORR_IMM8(x2, x2, 2, 0);
+            BFI(xFlags, x2, 0, 16);
+            SET_DFNONE(x1);
             break;
 
         case 0xA1:
@@ -633,7 +634,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             u16 = F16;
             MOVW(x2, u16);
             UBFX(x1, xEAX, 0, 16);
-            emit_test16(dyn, ninst, x1, x2, x3, x12);
+            emit_test16(dyn, ninst, x1, x2, x3, x14);
             break;
 
         case 0xAB:
@@ -818,15 +819,15 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 case 6:
                     if(opcode==0xD1) {
                         INST_NAME("SHL Ew, 1");
-                        MOVW(x12, 1);
+                        MOVW(x14, 1);
                     } else {
                         INST_NAME("SHL Ew, CL");
-                        AND_IMM8(x12, xECX, 0x1f);
+                        AND_IMM8(x14, xECX, 0x1f);
                     }
                     SETFLAGS(X_ALL, SF_PENDING);
                     GETEW(x1);
-                    UFLAG_OP12(ed, x12)
-                    MOV_REG_LSL_REG(ed, ed, x12);
+                    UFLAG_OP12(ed, x14)
+                    MOV_REG_LSL_REG(ed, ed, x14);
                     EWBACK;
                     UFLAG_RES(ed);
                     UFLAG_DF(x3, d_shl16);
@@ -834,15 +835,15 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 case 5:
                     if(opcode==0xD1) {
                         INST_NAME("SHR Ew, 1");
-                        MOVW(x12, 1);
+                        MOVW(x14, 1);
                     } else {
                         INST_NAME("SHR Ew, CL");
-                        AND_IMM8(x12, xECX, 0x1f);
+                        AND_IMM8(x14, xECX, 0x1f);
                     }
                     SETFLAGS(X_ALL, SF_PENDING);
                     GETEW(x1);
-                    UFLAG_OP12(ed, x12)
-                    MOV_REG_LSR_REG(ed, ed, x12);
+                    UFLAG_OP12(ed, x14)
+                    MOV_REG_LSR_REG(ed, ed, x14);
                     EWBACK;
                     UFLAG_RES(ed);
                     UFLAG_DF(x3, d_shr16);
@@ -850,15 +851,15 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 case 7:
                     if(opcode==0xD1) {
                         INST_NAME("SAR Ew, 1");
-                        MOVW(x12, 1);
+                        MOVW(x14, 1);
                     } else {
                         INST_NAME("SAR Ew, CL");
-                        AND_IMM8(x12, xECX, 0x1f);
+                        AND_IMM8(x14, xECX, 0x1f);
                     }
                     SETFLAGS(X_ALL, SF_PENDING);
                     GETSEW(x1);
-                    UFLAG_OP12(ed, x12)
-                    MOV_REG_ASR_REG(ed, ed, x12);
+                    UFLAG_OP12(ed, x14)
+                    MOV_REG_ASR_REG(ed, ed, x14);
                     EWBACK;
                     UFLAG_RES(ed);
                     UFLAG_DF(x3, d_sar16);
@@ -916,7 +917,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     MARK2;
                     SUB_IMM8(xECX, xECX, 1);
                     MARK3;
-                    emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+                    emit_cmp16(dyn, ninst, x1, x2, x3, x14);
                     break;
 
                 case 0xAB:
@@ -952,7 +953,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     MARK2;
                     SUB_IMM8(xECX, xECX, 1);
                     MARK3;
-                    emit_cmp16(dyn, ninst, x1, x2, x3, x12);
+                    emit_cmp16(dyn, ninst, x1, x2, x3, x14);
                     break;
                 default:
                     DEFAULT;
@@ -969,7 +970,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     GETEW(x1);
                     u16 = F16;
                     MOVW(x2, u16);
-                    emit_test16(dyn, ninst, x1, x2, x3, x12);
+                    emit_test16(dyn, ninst, x1, x2, x3, x14);
                     break;
                 case 2:
                     INST_NAME("NOT Ew");
@@ -981,7 +982,7 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     INST_NAME("NEG Ew");
                     SETFLAGS(X_ALL, SF_SET);
                     GETEW(x1);
-                    emit_neg16(dyn, ninst, ed, x2, x12);
+                    emit_neg16(dyn, ninst, ed, x2, x14);
                     EWBACK;
                     break;
                 case 4:
@@ -1026,23 +1027,19 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             i32 = dyn->state_flags; //TODO: find a better way to do this
             SETFLAGS(X_CF, SF_SUBSET);
             if(i32!=SF_SET) {
-                MOVW(x1, d_none);
-                STR_IMM9(x1, xEmu, offsetof(x86emu_t, df));
-            } else {
-                MOVW(x1, 0);
-            }
-            STR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_CF]));
+                SET_DFNONE(x1);
+            } 
+            BFC(xFlags, F_CF, 1);
             break;
         case 0xF9:
             INST_NAME("STC");
             i32 = dyn->state_flags; //TODO: find a better way to do this
             SETFLAGS(X_CF, SF_SUBSET);
             if(i32!=SF_SET) {
-                MOVW(x1, d_none);
-                STR_IMM9(x1, xEmu, offsetof(x86emu_t, df));
+                SET_DFNONE(x1);
             }
             MOVW(x1, 1);
-            STR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_CF]));
+            BFI(xFlags, x1, F_CF, 1);
             break;
 
         case 0xFF:
@@ -1052,14 +1049,14 @@ uintptr_t dynarec66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     INST_NAME("INC Ew");
                     SETFLAGS(X_ALL&~X_CF, SF_SUBSET);
                     GETEW(x1);
-                    emit_inc16(dyn, ninst, x1, x2, x12);
+                    emit_inc16(dyn, ninst, x1, x2, x14);
                     EWBACK;
                     break;
                 case 1:
                     INST_NAME("DEC Ew");
                     SETFLAGS(X_ALL&~X_CF, SF_SET);
                     GETEW(x1);
-                    emit_dec16(dyn, ninst, x1, x2, x12);
+                    emit_dec16(dyn, ninst, x1, x2, x14);
                     EWBACK;
                     break;
                 default:

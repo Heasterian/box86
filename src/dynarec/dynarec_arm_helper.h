@@ -179,18 +179,22 @@
 #define GBBACK   BFI(gb1, gd, gb2*8, 8);
 
 // Get Direction with size Z and based of F_DF flag, on register r ready for LDR/STR fetching
+// F_DF is 1<<10, so 1 ROR 11*2 (so F_OF)
 #define GETDIR(r, A)    \
-    LDR_IMM9(r, xEmu, offsetof(x86emu_t, flags[F_DF]));     \
-    CMPS_IMM8(r, 1);                                        \
-    MOVW(r, A);                                             \
-    RSB_COND_IMM8(cEQ, r, r, 0)
+    TSTS_IMM8_ROR(xFlags, 1, 0x0b);         \
+    MOVW(r, A);                             \
+    RSB_COND_IMM8(cNE, r, r, 0)
 
-// CALL will use x12 for the call address. Return value can be put in ret (unless ret is -1)
+// CALL will use x14 for the call address. Return value can be put in ret (unless ret is -1)
 // R0 will not be pushed/popd if ret is -2
-#define CALL(F, ret, M) call_c(dyn, ninst, F, x12, ret, M)
+#define CALL(F, ret, M) call_c(dyn, ninst, F, x14, ret, M, 1)
 // CALL_ will use x3 for the call address. Return value can be put in ret (unless ret is -1)
 // R0 will not be pushed/popd if ret is -2
-#define CALL_(F, ret, M) call_c(dyn, ninst, F, x3, ret, M)
+#define CALL_(F, ret, M) call_c(dyn, ninst, F, x3, ret, M, 1)
+// CALL_S will use x3 for the call address. Return value can be put in ret (unless ret is -1)
+// R0 will not be pushed/popd if ret is -2. Flags are not save/restored
+#define CALL_S(F, ret, M) call_c(dyn, ninst, F, x3, ret, M, 0)
+
 #define MARK    if(dyn->insts) {dyn->insts[ninst].mark = (uintptr_t)dyn->arm_size;}
 #define GETMARK ((dyn->insts)?dyn->insts[ninst].mark:(dyn->arm_size+4))
 #define MARK2   if(dyn->insts) {dyn->insts[ninst].mark2 = (uintptr_t)dyn->arm_size;}
@@ -250,40 +254,34 @@
 // Generate FCOMI with s1 and s2 scratch regs (the VCMP is already done)
 #define FCOMI(s1, s2)    \
     VMRS_APSR();    /* 0b111 */                             \
-    XOR_REG_LSL_IMM5(s2, s2, s2, 0);                        \
-    MOVW_COND(cVS, s1, 0b111); /* unordered */              \
-    MOVW_COND(cEQ, s1, 0b100); /* zero */                   \
-    MOVW_COND(cGT, s1, 0b000); /* greater than */           \
-    MOVW_COND(cLO, s1, 0b001); /* less than */              \
-    IFX(X_CF|X_PEND) {                                      \
-        UBFX(s2, s1, 0, 1);                                 \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_CF]));\
+    MOVW_COND(cVS, s1, 0b1000101); /* unordered */          \
+    MOVW_COND(cEQ, s1, 0b1000000); /* zero */               \
+    MOVW_COND(cGT, s1, 0b0000000); /* greater than */       \
+    MOVW_COND(cLO, s1, 0b0000001); /* less than */          \
+    IFX(X_CF|X_PF|X_ZF|X_PEND) {                            \
+        BIC_IMM8(xFlags, xFlags, 0b1000101, 0);             \
+        ORR_REG_LSL_IMM5(xFlags, xFlags, s1, 0);            \
     }                                                       \
-    IFX(X_PF|X_PEND) {                                      \
-        UBFX(s2, s1, 1, 1);                                 \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_PF]));\
-    }                                                       \
-    IFX(X_ZF|X_PEND) {                                      \
-        UBFX(s2, s1, 2, 1);                                 \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_ZF]));\
-    }                                                       \
-    MOVW(s2, d_none);                                       \
-    STR_IMM9(s2, xEmu, offsetof(x86emu_t, df));             \
+    SET_DFNONE(s1);                                         \
     IFX(X_OF|X_PEND) {                                      \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_OF]));\
+        BFC(xFlags, F_OF, 1);                               \
     }                                                       \
     IFX(X_AF|X_PEND) {                                      \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_AF]));\
+        BFC(xFlags, F_AF, 1);                               \
     }                                                       \
     IFX(X_SF|X_PEND) {                                      \
-        STR_IMM9(s2, xEmu, offsetof(x86emu_t, flags[F_SF]));\
+        BFC(xFlags, F_SF, 1);                               \
     }                                                       \
 
 
+#define SET_DFNONE(S)    if(!dyn->dfnone) {MOVW(S, d_none); STR_IMM9(S, xEmu, offsetof(x86emu_t, df)); dyn->dfnone=1;}
+#define SET_DF(S, N)     if(N) {MOVW(S, N); STR_IMM9(S, xEmu, offsetof(x86emu_t, df)); dyn->dfnone=0;} else SET_DFNONE(S)
+#define SET_NODF()          dyn->dfnone = 0
+#define SET_DFOK()          dyn->dfnone = 1
 
 #ifndef READFLAGS
 #define READFLAGS(A) \
-    if(dyn->state_flags!=SF_SET) {                      \
+    if(((A)!=X_PEND) && dyn->state_flags!=SF_SET) {     \
         if(dyn->state_flags!=SF_PENDING) {              \
             LDR_IMM9(x3, xEmu, offsetof(x86emu_t, df)); \
             TSTS_REG_LSL_IMM5(x3, x3, 0);               \
@@ -293,6 +291,7 @@
         CALL_(UpdateFlags, -1, 0);                      \
         MARKF;                                          \
         dyn->state_flags = SF_SET;                      \
+        SET_DFOK();                                     \
     }
 #endif
 #ifndef SETFLAGS
@@ -310,11 +309,11 @@
 #ifndef BARRIER_NEXT
 #define BARRIER_NEXT(A)
 #endif
-#define UFLAG_OP1(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, 0, offsetof(x86emu_t, op1));}
-#define UFLAG_OP2(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, 0, offsetof(x86emu_t, op2));}
-#define UFLAG_OP12(A1, A2) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A1, 0, offsetof(x86emu_t, op1));STR_IMM9(A2, 0, offsetof(x86emu_t, op2));}
-#define UFLAG_RES(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, 0, offsetof(x86emu_t, res));}
-#define UFLAG_DF(r, A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {MOVW(r, A); STR_IMM9(r, 0, offsetof(x86emu_t, df));}
+#define UFLAG_OP1(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, xEmu, offsetof(x86emu_t, op1));}
+#define UFLAG_OP2(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, xEmu, offsetof(x86emu_t, op2));}
+#define UFLAG_OP12(A1, A2) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A1, xEmu, offsetof(x86emu_t, op1));STR_IMM9(A2, 0, offsetof(x86emu_t, op2));}
+#define UFLAG_RES(A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {STR_IMM9(A, xEmu, offsetof(x86emu_t, res));}
+#define UFLAG_DF(r, A) if(dyn->insts && dyn->insts[ninst].x86.need_flags) {SET_DF(r, A)}
 #define UFLAG_IF if(dyn->insts && dyn->insts[ninst].x86.need_flags)
 #ifndef DEFAULT
 #define DEFAULT      *ok = -1; BARRIER(2)
@@ -332,7 +331,7 @@
 #endif
 
 void arm_epilog();
-void* arm_linker(x86emu_t* emu, void** table, uintptr_t addr);
+void* arm_next(x86emu_t* emu, uintptr_t addr);
 
 #ifndef STEPNAME
 #define STEPNAME3(N,M) N##M
@@ -362,10 +361,9 @@ void* arm_linker(x86emu_t* emu, void** table, uintptr_t addr);
 #define dynarecF30F     STEPNAME(dynarecF30F)
 
 #define geted           STEPNAME(geted_)
-#define fakeed          STEPNAME(fakeed_)
 #define geted16         STEPNAME(geted16_)
 #define jump_to_epilog  STEPNAME(jump_to_epilog_)
-#define jump_to_linker  STEPNAME(jump_to_linker_)
+#define jump_to_next    STEPNAME(jump_to_next_)
 #define ret_to_epilog   STEPNAME(ret_to_epilog_)
 #define retn_to_epilog  STEPNAME(retn_to_epilog_)
 #define iret_to_epilog  STEPNAME(iret_to_epilog_)
@@ -432,11 +430,17 @@ void* arm_linker(x86emu_t* emu, void** table, uintptr_t addr);
 #define emit_neg32      STEPNAME(emit_neg32)
 #define emit_neg16      STEPNAME(emit_neg16)
 #define emit_neg8       STEPNAME(emit_neg8)
+#define emit_shl32      STEPNAME(emit_shl32)
 #define emit_shl32c     STEPNAME(emit_shl32c)
+#define emit_shr32      STEPNAME(emit_shr32)
 #define emit_shr32c     STEPNAME(emit_shr32c)
 #define emit_sar32c     STEPNAME(emit_sar32c)
 #define emit_rol32c     STEPNAME(emit_rol32c)
 #define emit_ror32c     STEPNAME(emit_ror32c)
+#define emit_shrd32c    STEPNAME(emit_shrd32c)
+#define emit_shld32c    STEPNAME(emit_shld32c)
+
+#define emit_pf         STEPNAME(emit_pf)
 
 #define x87_do_push     STEPNAME(x87_do_push)
 #define x87_do_push_empty STEPNAME(x87_do_push_empty)
@@ -461,9 +465,6 @@ void* arm_linker(x86emu_t* emu, void** table, uintptr_t addr);
 #ifdef HAVE_TRACE
 #define fpu_reflectcache STEPNAME(fpu_reflectcache)
 #endif
-#define cstack_push     STEPNAME(cstack_push)
-#define cstack_pop      STEPNAME(cstack_pop)
-
 
 // get the single reg that from the double "reg" (so Dx[idx])
 #define fpu_get_single_reg      STEPNAME(fpu_get_single_reg)
@@ -473,20 +474,17 @@ void* arm_linker(x86emu_t* emu, void** table, uintptr_t addr);
 /* setup r2 to address pointed by */
 uintptr_t geted(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop, uint8_t* ed, uint8_t hint, int* fixedaddress, uint32_t absmax, uint32_t mask);
 
-// Do the GETED, but don't emit anything...
-uintptr_t fakeed(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop);
-
 /* setup r2 to address pointed by */
 uintptr_t geted16(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop, uint8_t* ed, uint8_t hint, int* fixedaddress, uint32_t absmax, uint32_t mask);
 
 
 // generic x86 helper
 void jump_to_epilog(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst);
-void jump_to_linker(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst);
+void jump_to_next(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst);
 void ret_to_epilog(dynarec_arm_t* dyn, int ninst);
 void retn_to_epilog(dynarec_arm_t* dyn, int ninst, int n);
 void iret_to_epilog(dynarec_arm_t* dyn, int ninst);
-void call_c(dynarec_arm_t* dyn, int ninst, void* fnc, int reg, int ret, uint32_t mask);
+void call_c(dynarec_arm_t* dyn, int ninst, void* fnc, int reg, int ret, uint32_t mask, int saveflags);
 void grab_fsdata(dynarec_arm_t* dyn, uintptr_t addr, int ninst, int reg);
 void grab_tlsdata(dynarec_arm_t* dyn, uintptr_t addr, int ninst, int reg);
 void emit_lock(dynarec_arm_t* dyn, uintptr_t addr, int ninst);
@@ -514,21 +512,21 @@ void emit_xor32(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_xor32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_and32(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_and32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_or8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_or8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_or8c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_xor8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_xor8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_xor8c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_and8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_and8(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_and8c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_add16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
 void emit_add16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_sub16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
 void emit_sub16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_or16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_or16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_or16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_xor16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_xor16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_xor16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
-void emit_and16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4, int save_s4);
+void emit_and16(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_and16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_inc32(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
 void emit_inc16(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
@@ -551,11 +549,17 @@ void emit_sbb16c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s
 void emit_neg32(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
 void emit_neg16(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
 void emit_neg8(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
+void emit_shl32(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_shl32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
+void emit_shr32(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3, int s4);
 void emit_shr32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_sar32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_rol32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
 void emit_ror32c(dynarec_arm_t* dyn, int ninst, int s1, int32_t c, int s3, int s4);
+void emit_shrd32c(dynarec_arm_t* dyn, int ninst, int s1, int s2, int32_t c, int s3, int s4);
+void emit_shld32c(dynarec_arm_t* dyn, int ninst, int s1, int s2, int32_t c, int s3, int s4);
+
+void emit_pf(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4);
 
 // x87 helper
 // cache of the local stack counter, to avoid upadte at every call
@@ -627,11 +631,6 @@ uintptr_t dynarecF0(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
 uintptr_t dynarec660F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, int* ok, int* need_epilog);
 uintptr_t dynarecF20F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, int* ok, int* need_epilog);
 uintptr_t dynarecF30F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, int* ok, int* need_epilog);
-
-// PUSH a x86/native couple of address in cstack, using s1, s2, s2+1
-void cstack_push(dynarec_arm_t* dyn, int ninst, uintptr_t x86ip, uintptr_t armip, int s1, int s2);
-// POP a x86/native couple of address from cstack, and generate the jump is x86 address is s0, use s1, s2 and s2+1 as scratch
-void cstack_pop(dynarec_arm_t* dyn, int ninst, int s0, int s1, int s2);
 
 #if STEP < 2
 #define PASS2(A)

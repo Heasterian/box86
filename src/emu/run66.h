@@ -2,15 +2,28 @@
     goto *opcodes66[opcode];
 
     #define GO(B, OP)                       \
+    _66_##B##_0: \
+        nextop = F8;               \
+        GET_EB;             \
+        EB->byte[0] = OP##8(emu, EB->byte[0], GB);  \
+        NEXT;                              \
     _66_##B##_1:                               \
         nextop = F8;                \
         GET_EW;                   \
         EW->word[0] = OP##16(emu, EW->word[0], GW.word[0]); \
         NEXT;                              \
+    _66_##B##_2: \
+        nextop = F8;               \
+        GET_EB;                   \
+        GB = OP##8(emu, GB, EB->byte[0]); \
+        NEXT;                              \
     _66_##B##_3:                               \
         nextop = F8;                \
         GET_EW;                   \
         GW.word[0] = OP##16(emu, GW.word[0], EW->word[0]); \
+        NEXT;                              \
+    _66_##B##_4: \
+        R_AL = OP##8(emu, R_AL, F8); \
         NEXT;                              \
     _66_##B##_5:                               \
         R_AX = OP##16(emu, R_AX, F16); \
@@ -30,7 +43,7 @@
         NEXT;
     _66_0x07:                      /* POP ES */
         emu->segs[_ES] = Pop16(emu);    // no check, no use....
-        emu->segs_clean[_ES] = 0;
+        emu->segs_serial[_ES] = 0;
         NEXT;
 
     _66_0x0F:                      /* 66 0f prefix */
@@ -39,6 +52,12 @@
         Run660F(emu); // implemented in Run660f.c
         ip = R_EIP;
         if(emu->quit) goto fini;
+        STEP
+        NEXT;
+
+    _66_0x1F:                      /* POP DS */
+        emu->segs[_DS] = Pop16(emu);    // no check, no use....
+        emu->segs_serial[_DS] = 0;
         NEXT;
         
     _66_0x26:                      /* ES: */
@@ -134,6 +153,13 @@
         R_AX = Pop16(emu);
         NEXT;
 
+    _66_0x64:
+        R_EIP = ip-2;
+        RunFS66(emu, GetFSBaseEmu(emu));
+        ip = R_EIP;
+        STEP;
+        NEXT;
+
     _66_0x66:
         goto _0x66; // 0x66 0x66 => can remove one 0x66
 
@@ -215,7 +241,7 @@
         nextop = F8;
         GET_EW;
         emu->segs[((nextop&0x38)>>3)] = EW->word[0];
-        emu->segs_clean[((nextop&0x38)>>3)] = 0;
+        emu->segs_serial[((nextop&0x38)>>3)] = 0;
         NEXT;
     _66_0x8F:                              /* POP Ew */
         nextop = F8;
@@ -246,15 +272,12 @@
 
     _66_0x9C:                              /* PUSHFW */
         CHECK_FLAGS(emu);
-        PackFlags(emu);
-        Push16(emu, (uint16_t)emu->packed_eflags.x32);
+        Push16(emu, (uint16_t)emu->eflags.x32);
         NEXT;
     _66_0x9D:                              /* POPFW */
         CHECK_FLAGS(emu);
-        PackFlags(emu);
-        emu->packed_eflags.x32 &=0xffff0000;
-        emu->packed_eflags.x32 |= (Pop16(emu) & 0x3F7FD7) | 0x2;
-        UnpackFlags(emu);
+        emu->eflags.x32 &=0xffff0000;
+        emu->eflags.x32 |= (Pop16(emu) & 0x3F7FD7) | 0x2;
         NEXT;
 
     _66_0xA1:                              /* MOV AX,Ow */
@@ -332,6 +355,22 @@
         EW->word[0] = F16;
         NEXT;
 
+    _66_0xCB:                               /* FAR RET */
+        ip = Pop(emu);
+        emu->segs[_CS] = Pop(emu);    // no check, no use....
+        emu->segs_serial[_CS] = 0;
+        // need to check status of CS register!
+        STEP
+        NEXT;
+    _66_0xCC:                              /* INT3 */
+        emu->old_ip = R_EIP;
+        R_EIP = ip-1;
+        if(my_context->signals[SIGTRAP])
+            raise(SIGTRAP);
+        ip = R_EIP;
+        if(emu->quit) goto fini;
+        STEP
+        NEXT;
     _66_0xD1:                              /* GRP2 Ew,1  */
     _66_0xD3:                              /* GRP2 Ew,CL */
         nextop = F8;
@@ -355,6 +394,7 @@
         Run66D9(emu);
         ip = R_EIP;
         if(emu->quit) goto fini;
+        STEP
         NEXT;
 
     _66_0xDD:
@@ -363,8 +403,17 @@
         Run66DD(emu);
         ip = R_EIP;
         if(emu->quit) goto fini;
+        STEP
         NEXT;
 
+    _66_0xF0:                      /* LOCK prefix */
+        emu->old_ip = R_EIP;
+        R_EIP = ip - 2;
+        RunLock66(emu);
+        ip = R_EIP;
+        if(emu->quit) goto fini;
+        STEP
+        NEXT;
 
     _66_0xF2:                      /* REPNZ prefix */
     _66_0xF3:                      /* REPZ prefix */

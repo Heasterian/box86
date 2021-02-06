@@ -570,7 +570,7 @@ GO(g_key_file_set_uint64, vFpppU)
 GO(g_key_file_set_value, vFpppp)
 GO(g_key_file_to_data, pFppp)
 GO(g_key_file_unref, vFp)
-//GO(glib_check_version, 
+GO(glib_check_version, pFuuu)
 //GO(glib_gettext, 
 //GO(glib_pgettext, 
 //GO(glib__private__, 
@@ -616,7 +616,7 @@ GO(g_log_remove_handler, vFpu)
 GO(g_log_set_always_fatal, iFi)
 GOM(g_log_set_default_handler, pFEpp)
 GO(g_log_set_fatal_mask, iFpi)
-//GOM(g_log_set_handler, uFpiBp)
+GOM(g_log_set_handler, uFEpipp)
 GO(g_logv, vFpppp)      // need align?
 GO(g_lstat, iFpp)
 GO(g_main_context_acquire, iFp)

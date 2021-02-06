@@ -17,8 +17,10 @@
 #include "x86trace.h"
 #include "dynarec_arm.h"
 #include "dynarec_arm_private.h"
+#include "dynablock_private.h"
 #include "arm_printer.h"
 #include "../tools/bridge_private.h"
+#include "custommem.h"
 
 #include "dynarec_arm_functions.h"
 #include "dynarec_arm_helper.h"
@@ -152,31 +154,6 @@ uintptr_t geted(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop, u
     return addr;
 }
 
-// Do the GETED, but don't emit anything...
-uintptr_t fakeed(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop) 
-{
-    if(!(nextop&0xC0)) {
-        if((nextop&7)==4) {
-            uint8_t sib = F8;
-            if((sib&0x7)==5) {
-                addr+=4;
-            }
-        } else if((nextop&7)==5) {
-            addr+=4;
-        }
-    } else {
-        if((nextop&7)==4) {
-            ++addr;
-        }
-        if(nextop&0x80) {
-            addr+=4;
-        } else {
-            ++addr;
-        }
-    }
-    return addr;
-}
-
 /* setup r2 to address pointed by ED, r3 as scratch also fixaddress is an optionnal delta in the range [-absmax, +absmax], with delta&mask==0 to be added to ed for LDR/STR */
 uintptr_t geted16(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop, uint8_t* ed, uint8_t hint, int* fixaddress, uint32_t absmax, uint32_t mask)
 {
@@ -267,48 +244,27 @@ void jump_to_epilog(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst)
     BX(2);
 }
 
-void jump_to_linker(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst)
+void jump_to_next(dynarec_arm_t* dyn, uintptr_t ip, int reg, int ninst)
 {
-    MESSAGE(LOG_DUMP, "Jump to linker (#%d) nolinker=%d\n", dyn->tablei, dyn->nolinker);
-    int j32;
-    MAYUSE(j32);
-    if(dyn->nolinker==2) {
-        jump_to_epilog(dyn, ip, reg, ninst);
+    MESSAGE(LOG_DUMP, "Jump to next\n");
+
+    if(reg) {
+        if(reg!=xEIP) {
+            MOV_REG(xEIP, reg);
+        }
+        MOV32(x2, getJumpTable());
+        MOV_REG_LSR_IMM5(x3, xEIP, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
+        UBFX(x3, xEIP, 0, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
     } else {
-        if(reg) {
-            if(reg!=xEIP) {
-                MOV_REG(xEIP, reg);
-            }
-        } else {
-            MOV32_(xEIP, ip);
-        }
-        uintptr_t* table = 0;
-        if(dyn->tablesz) {
-            table = &dyn->table[dyn->tablei];
-            table[0] = (uintptr_t)arm_linker;
-            table[1] = ip;
-        }
-        dyn->tablei+=4; // smart linker or not, we keep table correctly alligned for LDREXD/STREXD access
-        MOV32_(x1, (uintptr_t)table);
-        // TODO: This is not thread safe.
-        if(!ip) {   // no IP, jump address in a reg, so need smart linker
-            MARK;
-            LDREXD(x2, x1); // load dest address in x2 and planned ip in x3
-            CMPS_REG_LSL_IMM5(xEIP, x3, 0);
-            BXcond(cEQ, x2);
-            MOV32_(x2, (uintptr_t)arm_linker);
-            MOV_REG(x3, x12);
-            STREXD(x12, x2, x1); // nope, putting back linker & IP in place
-            // x12 now contain success / falure for write
-            CMPS_IMM8(x12, 1);
-            MOV_REG(x12, x3);   // put back IP in place...
-            B_MARK(cEQ);
-            BX(x2); // go to linker
-        } else {
-            LDR_IMM9(x2, x1, 0);
-            BX(x2); // jump
-        }
+        uintptr_t p = getJumpTableAddress(ip); 
+        MOV32(x2, p);
+        MOV32_(xEIP, ip);
+        LDR_IMM9(x2, x2, 0);
     }
+    MOV_REG(x1, xEIP);
+    BX(x2);
 }
 
 void ret_to_epilog(dynarec_arm_t* dyn, int ninst)
@@ -319,16 +275,19 @@ void ret_to_epilog(dynarec_arm_t* dyn, int ninst)
     MAYUSE(i32);
     if(dyn->nolinker) {
 #endif
-        MESSAGE(LOG_DUMP, "Ret epilog\n");
-        POP(xESP, 1<<xEIP);
-        cstack_pop(dyn, ninst, xEIP, x1, x2);
-        PASS3(void* epilog = arm_epilog);
-        MOV32_(x2, (uintptr_t)epilog);
+        MESSAGE(LOG_DUMP, "Ret next\n");
+        POP1(xEIP);
+        MOV32(x2, getJumpTable());
+        MOV_REG_LSR_IMM5(x3, xEIP, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
+        UBFX(x3, xEIP, 0, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
+        MOV_REG(x1, xEIP);
         BX(x2);
 #if 0
     } else {
         MESSAGE(LOG_DUMP, "Ret epilog with linker\n");
-        POP(xESP, 1<<xEIP);
+        POP1(xEIP);
         uintptr_t* table = 0;
         if(dyn->tablesz) {
             table = &dyn->table[dyn->tablei];
@@ -342,11 +301,11 @@ void ret_to_epilog(dynarec_arm_t* dyn, int ninst)
         CMPS_REG_LSL_IMM5(xEIP, x3, 0);
         BXcond(cEQ, x2);
         MOV32_(x2, (uintptr_t)arm_linker);
-        MOV_REG(x3, x12);
-        STREXD(x12, x2, x1); // nope, putting back linker & IP in place
-        // x12 now contain success / falure for write
-        CMPS_IMM8(x12, 1);
-        MOV_REG(x12, x3);   // put back IP in place...
+        MOV_REG(x3, x14);
+        STREXD(x14, x2, x1); // nope, putting back linker & IP in place
+        // x14 now contain success / falure for write
+        CMPS_IMM8(x14, 1);
+        MOV_REG(x14, x3);   // put back IP in place...
         B_MARK(cEQ);
         BX(x2); // go to linker
     }
@@ -361,21 +320,24 @@ void retn_to_epilog(dynarec_arm_t* dyn, int ninst, int n)
     if(dyn->nolinker) {
 #endif
         MESSAGE(LOG_DUMP, "Retn epilog\n");
-        POP(xESP, 1<<xEIP);
+        POP1(xEIP);
         if(n>0xff) {
             MOVW(x1, n);
             ADD_REG_LSL_IMM5(xESP, xESP, x1, 0);
         } else {
             ADD_IMM8(xESP, xESP, n);
         }
-        cstack_pop(dyn, ninst, xEIP, x1, x2);
-        PASS3(void* epilog = arm_epilog);
-        MOV32_(x2, (uintptr_t)epilog);
+        MOV32(x2, getJumpTable());
+        MOV_REG_LSR_IMM5(x3, xEIP, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
+        UBFX(x3, xEIP, 0, DYNAMAP_SHIFT);
+        LDR_REG_LSL_IMM5(x2, x2, x3, 2);    // shiftsizeof(uintptr_t)
+        MOV_REG(x1, xEIP);
         BX(x2);
 #if 0
     } else {
         MESSAGE(LOG_DUMP, "Retn epilog with linker\n");
-        POP(xESP, 1<<xEIP);
+        POP1(xEIP);
         ADD_IMM8(xESP, xESP, n);
         uintptr_t* table = 0;
         if(dyn->tablesz) {
@@ -390,11 +352,11 @@ void retn_to_epilog(dynarec_arm_t* dyn, int ninst, int n)
         CMPS_REG_LSL_IMM5(xEIP, x3, 0);
         BXcond(cEQ, x2);
         MOV32_(x2, (uintptr_t)arm_linker);
-        MOV_REG(x3, x12);
-        STREXD(x12, x2, x1); // nope, putting back linker & IP in place
-        // x12 now contain success / falure for write
-        CMPS_IMM8(x12, 1);
-        MOV_REG(x12, x3);   // put back IP in place...
+        MOV_REG(x3, x14);
+        STREXD(x14, x2, x1); // nope, putting back linker & IP in place
+        // x14 now contain success / falure for write
+        CMPS_IMM8(x14, 1);
+        MOV_REG(x14, x3);   // put back IP in place...
         B_MARK(cEQ);
         BX(x2); // go to linker
     }
@@ -405,31 +367,33 @@ void iret_to_epilog(dynarec_arm_t* dyn, int ninst)
 {
     MESSAGE(LOG_DUMP, "IRet epilog\n");
     // POP IP
-    POP(xESP, 1<<xEIP);
+    POP1(xEIP);
     // POP CS
     MOVW(x1, offsetof(x86emu_t, segs[_CS]));
-    POP(xESP, 1<<x2);
+    POP1(x2);
     STRH_REG(x2, xEmu, x1);
     MOVW(x1, 0);
-    STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_clean[_CS]));
+    STR_IMM9(x1, xEmu, offsetof(x86emu_t, segs_serial[_CS]));
     // POP EFLAGS
-    POP(xESP, (1<<x1));
-    CALL(arm_popf, -1, (1<<xEIP));
-    MOVW(x1, d_none);
-    STR_IMM9(x1, xEmu, offsetof(x86emu_t, df));
+    POP1(xFlags);
+    MOV32(x1, 0x3F7FD7);
+    AND_REG_LSL_IMM5(xFlags, xFlags, x1, 0);
+    ORR_IMM8(xFlags, xFlags, 2, 0);
+    SET_DFNONE(x1);
     // Ret....
-    cstack_pop(dyn, ninst, xEIP, x1, x2);
-    PASS3(void* epilog = arm_epilog);
-    MOV32_(x2, (uintptr_t)epilog);
+    MOV32_(x2, (uintptr_t)arm_epilog);  // epilog on purpose, CS might have changed!
     BX(x2);
 }
 
-void call_c(dynarec_arm_t* dyn, int ninst, void* fnc, int reg, int ret, uint32_t mask)
+void call_c(dynarec_arm_t* dyn, int ninst, void* fnc, int reg, int ret, uint32_t mask, int saveflags)
 {
     if(ret!=-2) {
         PUSH(xSP, (1<<xEmu) | mask);
     }
     fpu_pushcache(dyn, ninst, reg);
+    if(saveflags) {
+        STR_IMM9(xFlags, xEmu, offsetof(x86emu_t, eflags));
+    }
     MOV32(reg, (uintptr_t)fnc);
     BLX(reg);
     fpu_popcache(dyn, ninst, reg);
@@ -439,19 +403,25 @@ void call_c(dynarec_arm_t* dyn, int ninst, void* fnc, int reg, int ret, uint32_t
     if(ret!=-2) {
         POP(xSP, (1<<xEmu) | mask);
     }
+    if(saveflags) {
+        LDR_IMM9(xFlags, xEmu, offsetof(x86emu_t, eflags));
+    }
+    SET_NODF();
 }
 
 void grab_tlsdata(dynarec_arm_t* dyn, uintptr_t addr, int ninst, int reg)
 {
     MESSAGE(LOG_DUMP, "Get TLSData\n");
-    //int32_t i32;
-    //MAYUSE(i32);
-    //LDR_IMM9(x12, xEmu, offsetof(x86emu_t, segs_clean[_GS]));
-    //CMPS_IMM8(x12, 1);
-    //LDR_IMM9_COND(cEQ, reg, xEmu, offsetof(x86emu_t, segs_offs[_GS]));
-    //B_MARKSEG(cEQ);
+    int32_t j32;
+    MAYUSE(j32);
+    LDR_IMM9(x1, xEmu, offsetof(x86emu_t, context));
+    LDR_IMM9(x14, xEmu, offsetof(x86emu_t, segs_serial[_GS]));  // complete check here
+    LDR_IMM9(x1, x1, offsetof(box86context_t, sel_serial));
+    CMPS_REG_LSL_IMM5(x14, x1, 0);
+    LDR_IMM9_COND(cEQ, reg, xEmu, offsetof(x86emu_t, segs_offs[_GS]));
+    B_MARKSEG(cEQ);
     MOVW(x1, _GS);
-    call_c(dyn, ninst, GetSegmentBaseEmu, 12, reg, 0);
+    call_c(dyn, ninst, GetSegmentBaseEmu, x14, reg, 0, 1);
     MARKSEG;
     MESSAGE(LOG_DUMP, "----TLSData\n");
 }
@@ -461,12 +431,12 @@ void grab_fsdata(dynarec_arm_t* dyn, uintptr_t addr, int ninst, int reg)
     int32_t j32;
     MAYUSE(j32);
     MESSAGE(LOG_DUMP, "Get FS: Offset\n");
-    LDR_IMM9(x12, xEmu, offsetof(x86emu_t, segs_clean[_FS]));
-    CMPS_IMM8(x12, 1);
-    LDR_IMM9_COND(cEQ, reg, xEmu, offsetof(x86emu_t, segs_offs[_FS]));
-    B_MARKSEG(cEQ);
+    LDR_IMM9(x14, xEmu, offsetof(x86emu_t, segs_serial[_FS]));// fast check here
+    CMPS_IMM8(x14, 0);
+    LDR_IMM9_COND(cNE, reg, xEmu, offsetof(x86emu_t, segs_offs[_FS]));
+    B_MARKSEG(cNE);
     MOVW(x1, _FS);
-    call_c(dyn, ninst, GetSegmentBaseEmu, 12, reg, 0);
+    call_c(dyn, ninst, GetSegmentBaseEmu, x14, reg, 0, 1);
     MARKSEG;
     MESSAGE(LOG_DUMP, "----FS: Offset\n");
 }
@@ -1177,49 +1147,13 @@ void fpu_putback_single_reg(dynarec_arm_t* dyn, int ninst, int reg, int idx, int
     }
 }
 
-
-// PUSH a x86/native couple of address in cstack, using s1, s2, s2+1
-void cstack_push(dynarec_arm_t* dyn, int ninst, uintptr_t x86ip, uintptr_t armip, int s1, int s2)
+void emit_pf(dynarec_arm_t* dyn, int ninst, int s1, int s3, int s4)
 {
-    if(x86ip)
-        armip+=dyn->arm_start;
-    MESSAGE(LOG_DUMP, "CStack PUSH %p/%p-----\n", (void*)x86ip, (void*)armip);
-    // load current indice
-    LDR_IMM9(s2, xEmu, offsetof(x86emu_t, cstacki));
-    // calcule offset in the cstack
-    MOV32(s1, offsetof(x86emu_t, cstack));
-    TSTS_IMM8(xEmu, 0x04);              // test if x86emu_t struct is not 0x8 aligned
-    ADD_IMM8_cond(cNE, s1, s1, 4);      // align...
-    ADD_REG_LSL_IMM5(s1, s1, s2, 3);    //*8, because it's a pair of address
-    // increment (mod mask) and save back index
-    ADD_IMM8(s2, s2, 1);
-    AND_IMM8(s2, s2, CSTACKMASK);
-    STR_IMM9(s2, xEmu, offsetof(x86emu_t, cstacki));
-    // push the pair of address
-    MOV32(s2, x86ip);
-    MOV32_(s2+1, armip);
-    STRD_REG(s2, xEmu, s1);
-    MESSAGE(LOG_DUMP, "--------------CStack PUSH\n");
-}
-
-// POP a x86/native couple of address from cstack, and generate the jump is x86 address is s0, use s1, s2 and s2+1 as scratch
-void cstack_pop(dynarec_arm_t* dyn, int ninst, int s0, int s1, int s2)
-{
-    MESSAGE(LOG_DUMP, "CStack POP----------------\n");
-    // load current indice
-    LDR_IMM9(s1, xEmu, offsetof(x86emu_t, cstacki));
-    // decrement (mod mask) and save back index
-    SUB_IMM8(s1, s1, 1);
-    AND_IMM8(s1, s1, CSTACKMASK);
-    STR_IMM9(s1, xEmu, offsetof(x86emu_t, cstacki));
-    // calcule offset in the cstack
-    MOV32(s2, offsetof(x86emu_t, cstack));
-    TSTS_IMM8(xEmu, 0x04);              // test if x86emu_t struct is not 0x8 aligned
-    ADD_IMM8_cond(cNE, s2, s2, 4);      // align...
-    ADD_REG_LSL_IMM5(s1, s2, s1, 3);    //*8, because it's a pair of address
-    // pop the pair of address
-    LDRD_REG(s2, xEmu, s1);
-    CMPS_REG_LSL_IMM5(s0, s2, 0);
-    BXcond(cEQ, s2+1);
-    MESSAGE(LOG_DUMP, "----------------CStack POP\n");
+    // PF: (((emu->x86emu_parity_tab[(res) / 32] >> ((res) % 32)) & 1) == 0)
+    AND_IMM8(s3, s1, 0xE0); // lsr 5 masking pre-applied
+    MOV32(s4, GetParityTab());
+    LDR_REG_LSR_IMM5(s4, s4, s3, 5-2);   // x/32 and then *4 because array is integer
+    AND_IMM8(s3, s1, 31);
+    MVN_REG_LSR_REG(s4, s4, s3);
+    BFI(xFlags, s4, F_PF, 1);
 }

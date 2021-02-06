@@ -25,21 +25,6 @@
 #include "dynarec_arm_private.h"
 #include "dynarec_arm_functions.h"
 
-void arm_popf(x86emu_t* emu, uint32_t f)
-{
-    emu->packed_eflags.x32 = (f & 0x3F7FD7) | 0x2; // mask off res2 and res3 and on res1
-    UnpackFlags(emu);
-    RESET_FLAGS(emu);
-}
-
-void arm_popf16(x86emu_t* emu, uint32_t f)
-{
-    emu->packed_eflags.x32 &= 0xffff0000;
-    emu->packed_eflags.x32 |= (f & 0x7FD7) | 0x2; // mask off res2 and res3 and on res1
-    UnpackFlags(emu);
-    RESET_FLAGS(emu);
-}
-
 void arm_fstp(x86emu_t* emu, void* p)
 {
     if(ST0.ll!=STld(0).ref)
@@ -136,10 +121,10 @@ void arm_fistp64(x86emu_t* emu, int64_t* ed)
         memcpy(ed, &STll(0).ll, sizeof(int64_t));
     } else {
         int64_t tmp;
-        if(isgreater(ST0.d, (double)(int64_t)0x7fffffffffffffffLL) || isless(ST0.d, (double)(int64_t)0x8000000000000000LL))
+        if(isgreater(ST0.d, (double)(int64_t)0x7fffffffffffffffLL) || isless(ST0.d, (double)(int64_t)0x8000000000000000LL) || !isfinite(ST0.d))
             tmp = 0x8000000000000000LL;
         else
-            tmp = (int64_t)ST0.d;
+            tmp = fpu_round(emu, ST0.d);
         memcpy(ed, &tmp, sizeof(tmp));
     }
 }
@@ -266,11 +251,11 @@ void fpu_reset_reg(dynarec_arm_t* dyn)
         dyn->fpuused[i]=0;
 }
 
+#define F8      *(uint8_t*)(addr++)
+#define F32     *(uint32_t*)(addr+=4, addr-4)
 // Get if ED will have the correct parity. Not emiting anything. Parity is 2 for DWORD or 3 for QWORD
 int getedparity(dynarec_arm_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, int parity)
 {
-#define F8      *(uint8_t*)(addr++)
-#define F32     *(uint32_t*)(addr+=4, addr-4)
 
     uint32_t tested = (1<<parity)-1;
     if((nextop&0xC0)==0xC0)
@@ -289,7 +274,7 @@ int getedparity(dynarec_arm_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, i
                     return (tmp&tested)?0:1;
                 }
             } else {
-                if(sib_reg==4)
+                if(sib_reg==4 && parity<3)
                     return 0;   // simple [reg]
                 // don't try [reg1 + reg2<<N], unless reg1 is ESP
                 return ((sib&0x7)==4 && (sib>>6)>=parity)?1:0;
@@ -303,9 +288,36 @@ int getedparity(dynarec_arm_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, i
     } else {
         return 0; //Form [reg1 + reg2<<N + XXXXXX]
     }
+}
+
+// Do the GETED, but don't emit anything...
+uintptr_t fakeed(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop) 
+{
+    if((nextop&0xC0)==0xC0)
+        return addr;
+    if(!(nextop&0xC0)) {
+        if((nextop&7)==4) {
+            uint8_t sib = F8;
+            if((sib&0x7)==5) {
+                addr+=4;
+            }
+        } else if((nextop&7)==5) {
+            addr+=4;
+        }
+    } else {
+        if((nextop&7)==4) {
+            ++addr;
+        }
+        if(nextop&0x80) {
+            addr+=4;
+        } else {
+            ++addr;
+        }
+    }
+    return addr;
+}
 #undef F8
 #undef F32
-}
 
 int isNativeCall(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t* calladdress, int* retn)
 {

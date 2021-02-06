@@ -14,6 +14,7 @@
 #include "librarian.h"
 #include "gtkclass.h"
 #include "library.h"
+#include "custommem.h"
 #include "khash.h"
 
 static bridge_t*        my_bridge       = NULL;
@@ -71,9 +72,9 @@ static void* find_##NAME##_##A(void* fct)                           \
 }
 
 #define REVERSE(A, NAME)   \
-static void* reverse_##NAME##_##A(wrapper_t W, void* fct)           \
-{                                                                   \
-    if(!fct) return fct;                                            \
+static void* reverse_##NAME##_##A(wrapper_t W, void* fct)                       \
+{                                                                               \
+    if(!fct) return fct;                                                        \
     if((void*)my_##NAME##_##A##_0 == fct) return (void*)my_##NAME##_##A##_fct_0;\
     if((void*)my_##NAME##_##A##_1 == fct) return (void*)my_##NAME##_##A##_fct_1;\
     if((void*)my_##NAME##_##A##_2 == fct) return (void*)my_##NAME##_##A##_fct_2;\
@@ -82,10 +83,10 @@ static void* reverse_##NAME##_##A(wrapper_t W, void* fct)           \
     if((void*)my_##NAME##_##A##_5 == fct) return (void*)my_##NAME##_##A##_fct_5;\
     if((void*)my_##NAME##_##A##_6 == fct) return (void*)my_##NAME##_##A##_fct_6;\
     if((void*)my_##NAME##_##A##_7 == fct) return (void*)my_##NAME##_##A##_fct_7;\
-    Dl_info info;                                                   \
-    if(dladdr(fct, &info))                                          \
-        return (void*)AddCheckBridge(my_bridge, W, fct, 0);         \
-    return fct;                                                     \
+    Dl_info info;                                                               \
+    if(dladdr(fct, &info))                                                      \
+        return (void*)AddCheckBridge(my_bridge, W, fct, 0);                     \
+    return fct;                                                                 \
 }
 
 #define AUTOBRIDGE(A, NAME)   \

@@ -87,6 +87,7 @@ typedef void* (*pFpp_t)(void*, void*);
 typedef void* (*pFpip_t)(void*, int32_t, void*);
 typedef int32_t (*iFp_t)(void*);
 typedef int32_t (*iFpi_t)(void*, int32_t);
+typedef int32_t (*iFppp_t)(void*, void*, void*);
 typedef int32_t (*iFppu_t)(void*, void*, uint32_t);
 typedef int32_t (*iFpppp_t)(void*, void*, void*, void*);
 typedef uint32_t (*uFpii_t)(void*, int32_t, int32_t);
@@ -126,7 +127,9 @@ typedef int (*iFpppppp_t)(void*, void*, void*, void*, void*, void*);
     GO(XInitThreads, uFv_t)                 \
     GO(XRegisterIMInstantiateCallback, iFpppppp_t)      \
     GO(XUnregisterIMInstantiateCallback, iFpppppp_t)    \
-    GO(XQueryExtension, iFppppp_t)
+    GO(XQueryExtension, iFppppp_t)          \
+    GO(XAddConnectionWatch, iFppp_t)        \
+    GO(XRemoveConnectionWatch, iFppp_t)     \
 
 typedef struct x11_my_s {
     // functions
@@ -399,6 +402,72 @@ static void* reverse_register_imFct(library_t* lib, void* fct)
     return (void*)AddBridge(lib->priv.w.bridge, iFppp, fct, 0);
 }
 
+// XConnectionWatchProc
+#define GO(A)   \
+static uintptr_t my_XConnectionWatchProc_fct_##A = 0;                               \
+static void my_XConnectionWatchProc_##A(void* dpy, void* data, int op, void* d)     \
+{                                                                                   \
+    RunFunction(my_context, my_XConnectionWatchProc_fct_##A, 4, dpy, data, op, d);  \
+}
+SUPER()
+#undef GO
+static void* findXConnectionWatchProcFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_XConnectionWatchProc_fct_##A == (uintptr_t)fct) return my_XConnectionWatchProc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_XConnectionWatchProc_fct_##A == 0) {my_XConnectionWatchProc_fct_##A = (uintptr_t)fct; return my_XConnectionWatchProc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libX11 XConnectionWatchProc callback\n");
+    return NULL;
+}
+// xifevent
+#define GO(A)   \
+static uintptr_t my_xifevent_fct_##A = 0;                                   \
+static int my_xifevent_##A(void* dpy, void* event, void* d)                 \
+{                                                                           \
+    return RunFunction(my_context, my_xifevent_fct_##A, 3, dpy, event, d);  \
+}
+SUPER()
+#undef GO
+static void* findxifeventFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_xifevent_fct_##A == (uintptr_t)fct) return my_xifevent_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_xifevent_fct_##A == 0) {my_xifevent_fct_##A = (uintptr_t)fct; return my_xifevent_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libX11 xifevent callback\n");
+    return NULL;
+}
+// XInternalAsyncHandler
+#define GO(A)   \
+static uintptr_t my_XInternalAsyncHandler_fct_##A = 0;                                              \
+static int my_XInternalAsyncHandler_##A(void* dpy, void* rep, void* buf, int len, void* data)       \
+{                                                                                                   \
+    return RunFunction(my_context, my_XInternalAsyncHandler_fct_##A, 5, dpy, rep, buf, len, data);  \
+}
+SUPER()
+#undef GO
+static void* findXInternalAsyncHandlerFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_XInternalAsyncHandler_fct_##A == (uintptr_t)fct) return my_XInternalAsyncHandler_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_XInternalAsyncHandler_fct_##A == 0) {my_XInternalAsyncHandler_fct_##A = (uintptr_t)fct; return my_XInternalAsyncHandler_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libX11 XInternalAsyncHandler callback\n");
+    return NULL;
+}
 #undef SUPER
 
 void* my_XCreateImage(x86emu_t* emu, void* disp, void* vis, uint32_t depth, int32_t fmt, int32_t off
@@ -458,22 +527,11 @@ EXPORT void* my_XESetCloseDisplay(x86emu_t* emu, void* display, int32_t extensio
     return reverse_close_displayFct(lib, ret);
 }
 
-int32_t xifevent_callback(void* dpy, void *event, void* arg)
-{
-    x86emu_t *emu = (x86emu_t*)arg;
-    SetCallbackArg(emu, 0, dpy);
-    SetCallbackArg(emu, 1, event);
-    return (int32_t)RunCallback(emu);
-}
-
 EXPORT int32_t my_XIfEvent(x86emu_t* emu, void* d,void* ev, EventHandler h, void* arg)
 {
     library_t* lib = emu->context->x11lib;
     x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
-    x86emu_t *cb = NULL;
-    cb = AddSharedCallback(emu, (uintptr_t)h, 3, NULL, NULL, arg, NULL);
-    int32_t ret = my->XIfEvent(d, ev, xifevent_callback, (void*)cb);
-    FreeCallback(cb);
+    int32_t ret = my->XIfEvent(d, ev, findxifeventFct(h), arg);
     return ret;
 }
 
@@ -481,10 +539,7 @@ EXPORT int32_t my_XCheckIfEvent(x86emu_t* emu, void* d,void* ev, EventHandler h,
 {
     library_t* lib = emu->context->x11lib;
     x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
-    x86emu_t *cb = NULL;
-    cb = AddSharedCallback(emu, (uintptr_t)h, 3, NULL, NULL, arg, NULL);
-    int32_t ret = my->XCheckIfEvent(d, ev, xifevent_callback, (void*)cb);
-    FreeCallback(cb);
+    int32_t ret = my->XCheckIfEvent(d, ev, findxifeventFct(h), arg);
     return ret;
 }
 
@@ -492,10 +547,7 @@ EXPORT int32_t my_XPeekIfEvent(x86emu_t* emu, void* d,void* ev, EventHandler h, 
 {
     library_t* lib = emu->context->x11lib;
     x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
-    x86emu_t *cb = NULL;
-    cb = AddSharedCallback(emu, (uintptr_t)h, 3, NULL, NULL, arg, NULL);
-    int32_t ret = my->XPeekIfEvent(d, ev, xifevent_callback, (void*)cb);
-    FreeCallback(cb);
+    int32_t ret = my->XPeekIfEvent(d, ev, findxifeventFct(h), arg);
     return ret;
 }
 
@@ -509,7 +561,7 @@ void BridgeImageFunc(x86emu_t *emu, XImage *img)
 
     #define GO(A, W) \
     fnc = CheckBridged(system, img->f.A); \
-    if(!fnc) fnc = AddBridge(system, W, img->f.A, 0); \
+    if(!fnc) fnc = AddAutomaticBridge(emu, system, W, img->f.A, 0); \
     img->f.A = (W##_t)fnc;
 
     uintptr_t fnc;
@@ -640,32 +692,11 @@ typedef struct xintasync_s {
     void* data;
 } xintasync_t;
 
-static int my_XInternalAsyncHandler(void* dpy, void* rep, void* buf, int len, void* data)
-{
-    if(!data)
-        return 0;
-    x86emu_t *emu = (x86emu_t*)data;
-    SetCallbackArg(emu, 0, dpy);
-    SetCallbackArg(emu, 1, rep);
-    SetCallbackArg(emu, 2, buf);
-    SetCallbackArg(emu, 3, (void*)len);
-    // data is already se as 4th arg
-    int ret = RunCallback(emu);
-    return ret;
-}
-
 EXPORT void my__XDeqAsyncHandler(x86emu_t* emu, void* cb, void* data)
 {
     library_t* lib = emu->context->x11lib;
     x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
-
-    if(!data) {
-        my->_XDeqAsyncHandler(cb, data);
-        return;
-    }
-    x86emu_t *cbemu = AddCallback(emu, (uintptr_t)cb, 5, NULL, NULL, NULL, NULL);
-    SetCallbackArg(cbemu, 4, data);
-    my->_XDeqAsyncHandler(my_XInternalAsyncHandler, cbemu);
+    my->_XDeqAsyncHandler(findXInternalAsyncHandlerFct(cb), data);
 }
 #if 0
 typedef struct my_XIMArg_s {
@@ -851,6 +882,21 @@ EXPORT int my_XQueryExtension(x86emu_t* emu, void* display, char* name, int* maj
     return ret;
 }
 
+EXPORT int my_XAddConnectionWatch(x86emu_t* emu, void* display, char* f, void* data)
+{
+    library_t* lib = emu->context->x11lib;
+    x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
+
+    return my->XAddConnectionWatch(display, findXConnectionWatchProcFct(f), data);
+}
+
+EXPORT int my_XRemoveConnectionWatch(x86emu_t* emu, void* display, char* f, void* data)
+{
+    library_t* lib = emu->context->x11lib;
+    x11_my_t *my = (x11_my_t *)lib->priv.w.p2;
+
+    return my->XRemoveConnectionWatch(display, findXConnectionWatchProcFct(f), data);
+}
 
 #define CUSTOM_INIT                 \
     box86->x11lib = lib;            \

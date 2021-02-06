@@ -45,7 +45,7 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                 case 0x89:
                     INST_NAME("MOV FS:Ew16, Gw");
                     nextop = F8;
-                    grab_fsdata(dyn, addr, ninst, x12);
+                    grab_fsdata(dyn, addr, ninst, x14);
                     GETGD;  // don't need GETGW here
                     if((nextop&0xC0)==0xC0) {
                         ed = xEAX+(nextop&7);
@@ -54,14 +54,14 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                         }
                     } else {
                         addr = geted16(dyn, addr, ninst, nextop, &ed, x2, &fixedaddress, 0, 0);
-                        STRH_REG(gd, x12, ed);
+                        STRH_REG(gd, x14, ed);
                     }
                     break;
 
                 case 0x8B:
                     INST_NAME("MOV Gd, FS:Ew16");
                     nextop=F8;
-                    grab_fsdata(dyn, addr, ninst, x12);
+                    grab_fsdata(dyn, addr, ninst, x14);
                     GETGD;
                     if((nextop&0xC0)==0xC0) {   // reg <= reg
                         ed = xEAX+(nextop&7);
@@ -70,20 +70,20 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                         }
                     } else {                    // mem <= reg
                         addr = geted16(dyn, addr, ninst, nextop, &ed, x2, &fixedaddress, 0, 0);
-                        LDR_REG_LSL_IMM5(gd, x12, ed, 0);
+                        LDR_REG_LSL_IMM5(gd, x14, ed, 0);
                     }
                     break;
 
                 case 0x8F:
                     INST_NAME("POP FS:Ew16");
                     nextop=F8;
-                    grab_fsdata(dyn, addr, ninst, x12);
+                    grab_fsdata(dyn, addr, ninst, x14);
                     if((nextop&0xC0)==0xC0) {
-                        POP(xESP, (1<<(xEAX+(nextop&7))));  // 67 ignored
+                        POP1(xEAX+(nextop&7));  // 67 ignored
                     } else {
                         addr = geted16(dyn, addr, ninst, nextop, &ed, x1, &fixedaddress, 0, 0);
-                        POP(xESP, (1<<x2));
-                        STR_REG_LSL_IMM5(x2, x12, ed, 0);
+                        POP1(x2);
+                        STR_REG_LSL_IMM5(x2, x14, ed, 0);
                     }
                     break;
 
@@ -111,7 +111,7 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
 
                 case 0xFF:
                     nextop = F8;
-                    grab_fsdata(dyn, addr, ninst, x12);
+                    grab_fsdata(dyn, addr, ninst, x14);
                     switch((nextop>>3)&7) {
                         case 6: // Push Ed
                             INST_NAME("PUSH FS:Ew");
@@ -119,8 +119,8 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                                 DEFAULT;
                             } else {                    // mem <= i32
                                 addr = geted16(dyn, addr, ninst, nextop, &ed, x2, &fixedaddress, 0, 0);
-                                LDR_REG_LSL_IMM5(x3, ed, x12, 0);
-                                PUSH(xESP, 1<<x3);
+                                LDR_REG_LSL_IMM5(x3, ed, x14, 0);
+                                PUSH1(x3);
                             }
                             break;
                         default:
@@ -140,7 +140,7 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
                     /* out of the block */                  \
                     i32 = dyn->insts[ninst+1].address-(dyn->arm_size+8); \
                     Bcond(NO, i32);     \
-                    jump_to_linker(dyn, addr+i8, 0, ninst); \
+                    jump_to_next(dyn, addr+i8, 0, ninst); \
                 } else {    \
                     /* inside the block */  \
                     i32 = dyn->insts[dyn->insts[ninst].x86.jmp_insts].address-(dyn->arm_size+8);    \
@@ -155,8 +155,7 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SUBS_IMM8(x1, x1, 1);
             BFI(xECX, x1, 0, 16);
             B_NEXT(cEQ);    // CX is 0, no LOOP
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_ZF]));
-            TSTS_REG_LSL_IMM5(x1, x1, 0);
+            TSTS_IMM8(xFlags, 1<<F_ZF);
             GO(cNE, cEQ);
             break;
         case 0xE1:
@@ -167,8 +166,7 @@ uintptr_t dynarec67(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst,
             SUBS_IMM8(x1, x1, 1);
             BFI(xECX, x1, 0, 16);
             B_NEXT(cEQ);    // CX is 0, no LOOP
-            LDR_IMM9(x1, xEmu, offsetof(x86emu_t, flags[F_ZF]));
-            TSTS_REG_LSL_IMM5(x1, x1, 0);
+            TSTS_IMM8(xFlags, 1<<F_ZF);
             GO(cEQ, cNE);
             break;
         case 0xE2:

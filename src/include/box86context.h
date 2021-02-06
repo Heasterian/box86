@@ -12,7 +12,6 @@ typedef struct lib_s lib_t;
 typedef struct bridge_s bridge_t;
 typedef struct dlprivate_s dlprivate_t;
 typedef struct kh_symbolmap_s kh_symbolmap_t;
-typedef struct callbacklist_s callbacklist_t;
 typedef struct library_s library_t;
 typedef struct kh_fts_s kh_fts_t;
 typedef struct kh_threadstack_s kh_threadstack_t;
@@ -25,14 +24,13 @@ typedef struct atfork_fnc_s {
     void*     handle;
 } atfork_fnc_t;
 #ifdef DYNAREC
-typedef struct dynablocklist_s dynablocklist_t;
-typedef struct mmaplist_s      mmaplist_t;
-typedef struct dynmap_s {
-    dynablocklist_t* dynablocks;    // the dynabockist of the block
-} dynmap_t;
+typedef struct dynablock_s      dynablock_t;
+typedef struct dynablocklist_s  dynablocklist_t;
+typedef struct mmaplist_s       mmaplist_t;
+typedef struct kh_dynablocks_s  kh_dynablocks_t;
+#endif
 #define DYNAMAP_SIZE (1<<20)
 #define DYNAMAP_SHIFT 12
-#endif
 
 typedef void* (*procaddess_t)(const char* name);
 typedef void* (*vkprocaddess_t)(void* instance, const char* name);
@@ -70,10 +68,9 @@ typedef struct box86context_s {
 
     int                 x86trace;
     int                 trace_tid;
-#ifdef DYNAREC
-    int                 trace_dynarec;
-    pthread_mutex_t     mutex_dyndump;
-#endif
+
+    uint32_t            sel_serial;     // will be increment each time selectors changes
+
     zydis_t             *zydis;         // dlopen the zydis dissasembler
     void*               box86lib;       // dlopen on box86 itself
 
@@ -116,13 +113,14 @@ typedef struct box86context_s {
     kh_symbolmap_t      *vkmymap;       // link to the mysymbolmap of libGL
     vkprocaddess_t      vkprocaddress;
 
-    callbacklist_t      *callbacks;     // all callbacks
-
     pthread_mutex_t     mutex_once;
     pthread_mutex_t     mutex_once2;
     pthread_mutex_t     mutex_trace;
     #ifndef DYNAREC
     pthread_mutex_t     mutex_lock;     // dynarec build will use their own mecanism
+    #else
+    pthread_mutex_t     mutex_dyndump;
+    int                 trace_dynarec;
     #endif
     pthread_mutex_t     mutex_tls;
     pthread_mutex_t     mutex_thread;
@@ -171,14 +169,6 @@ typedef struct box86context_s {
     cleanup_t   *cleanups;          // atexit functions
     int         clean_sz;
     int         clean_cap;
-#ifdef DYNAREC
-    pthread_mutex_t     mutex_blocks;
-    pthread_mutex_t     mutex_mmap;
-    dynablocklist_t     *dynablocks;
-    mmaplist_t          *mmaplist;
-    int                 mmapsize;
-    dynmap_t*           dynmap[DYNAMAP_SIZE];  // 4G of memory mapped by 4K block
-#endif
 #ifndef NOALIGN
     kh_fts_t            *ftsmap;
 #endif
@@ -204,6 +194,8 @@ typedef struct box86context_s {
 #endif
 } box86context_t;
 
+extern box86context_t *my_context; // global context
+
 box86context_t *NewBox86Context(int argc);
 void FreeBox86Context(box86context_t** context);
 
@@ -212,19 +204,6 @@ int AddElfHeader(box86context_t* ctx, elfheader_t* head);
 
 // return the tlsbase (negative) for the new TLS partition created (no partition index is stored in the context)
 int AddTLSPartition(box86context_t* context, int tlssize);
-
-#ifdef DYNAREC
-// the nolinker specified if static map or dynamic (can be deleted) has to be used
-uintptr_t AllocDynarecMap(int size, int nolinker);
-void FreeDynarecMap(uintptr_t addr, uint32_t size);
-
-dynablocklist_t* getDBFromAddress(uintptr_t addr);
-void addDBFromAddressRange(uintptr_t addr, uintptr_t size, int nolinker);
-void cleanDBFromAddressRange(uintptr_t addr, uintptr_t size, int destroy);
-
-void protectDB(uintptr_t addr, uintptr_t size);
-void unprotectDB(uintptr_t addr, uintptr_t size);
-#endif
 
 // defined in fact in threads.c
 void thread_set_emu(x86emu_t* emu);

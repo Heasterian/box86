@@ -56,23 +56,24 @@ int32_t EXPORT my___libc_start_main(x86emu_t* emu, int *(main) (int, char * *, c
 
 const char* GetNativeName(void* p)
 {
-    static char unknown[10] = "???";
-
     static char buff[500] = {0};
     Dl_info info;
     if(dladdr(p, &info)==0) {
         const char *ret = GetNameOffset(my_context->maplib, p);
         if(ret)
             return ret;
-        return unknown;
+        sprintf(buff, "%s(%p)", "???", p);
+        return buff;
     } else {
         if(info.dli_sname) {
             strcpy(buff, info.dli_sname);
             if(info.dli_fname) {
                 strcat(buff, " ("); strcat(buff, info.dli_fname); strcat(buff, ")");
             }
-        } else
-            return unknown;
+        } else {
+            sprintf(buff, "%s(%s/%p)", "???", info.dli_fname, p);
+            return buff;
+        }
     }
     return buff;
 }
@@ -684,69 +685,11 @@ void UpdateFlags(x86emu_t *emu)
     RESET_FLAGS(emu);
 }
 
-
-void PackFlags(x86emu_t* emu)
-{
-    #define GO(A) emu->packed_eflags.f.F__##A = emu->flags[F_##A];
-    #define GOC(A, C) emu->packed_eflags.f.F__##A = C;
-    GO(CF);
-    GOC(res1, 1);
-    GO(PF);
-    GOC(res2, 0);
-    GO(AF);
-    GOC(res3, 0);
-    GO(ZF);
-    GO(SF);
-    GO(TF);
-    GO(IF);
-    GO(DF);
-    GO(OF);
-    GO(IOPL);
-    GO(NT);
-    GOC(dummy, 0);
-    GO(RF);
-    GO(VM);
-    GO(AC);
-    GO(VIF);
-    GO(VIP);
-    GO(ID);
-    #undef GO
-    #undef GOC
-}
-void UnpackFlags(x86emu_t* emu)
-{
-    #define GO(A) emu->flags[F_##A] = emu->packed_eflags.f.F__##A;
-    #define GOC(A, C) emu->flags[F_##A] = C;
-    GO(CF);
-    GOC(res1, 1);
-    GO(PF);
-    GOC(res2, 0);
-    GO(AF);
-    GOC(res3, 0);
-    GO(ZF);
-    GO(SF);
-    GO(TF);
-    GO(IF);
-    GO(DF);
-    GO(OF);
-    GO(IOPL);
-    GO(NT);
-    GOC(dummy, 0);
-    GO(RF);
-    GO(VM);
-    GO(AC);
-    GO(VIF);
-    GO(VIP);
-    GO(ID);
-    #undef GO
-    #undef GOC
-}
-
 uintptr_t GetSegmentBaseEmu(x86emu_t* emu, int seg)
 {
-    if(!emu->segs_clean[seg] || seg==_GS) {
+    if(emu->segs_serial[seg] != emu->context->sel_serial) {
         emu->segs_offs[seg] = (uintptr_t)GetSegmentBase(emu->segs[seg]);
-        emu->segs_clean[seg] = 1;
+        emu->segs_serial[seg] = emu->context->sel_serial;
     }
     return emu->segs_offs[seg];
 }
@@ -806,7 +749,6 @@ void PrintTrace(x86emu_t* emu, uintptr_t ip, int dynarec)
             my_context->trace_tid = tid;
         }
 #endif
-trace_end = 0;
         printf_log(LOG_NONE, "%s", DumpCPURegs(emu, ip));
         if(PK(0)==0xcc && PK(1)=='S' && PK(2)=='C') {
             uint32_t a = *(uint32_t*)(ip+3);

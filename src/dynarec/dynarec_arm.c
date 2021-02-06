@@ -6,6 +6,7 @@
 
 #include "debug.h"
 #include "box86context.h"
+#include "custommem.h"
 #include "dynarec.h"
 #include "emu/x86emu_private.h"
 #include "tools/bridge_private.h"
@@ -19,6 +20,7 @@
 #include "dynablock_private.h"
 #include "dynarec_arm.h"
 #include "dynarec_arm_private.h"
+#include "dynarec_arm_functions.h"
 #include "elfloader.h"
 
 void printf_x86_instruction(zydis_dec_t* dec, instruction_x86_t* inst, const char* name) {
@@ -81,9 +83,9 @@ uintptr_t get_closest_next(dynarec_arm_t *dyn, uintptr_t addr) {
     }
     return best;
 }
+#define PK(A) (*((uint8_t*)(addr+(A))))
 int is_nops(dynarec_arm_t *dyn, uintptr_t addr, int n)
 {
-    #define PK(A) (*((uint8_t*)(addr+(A))))
     if(!n)
         return 1;
     if(PK(0)==0x90)
@@ -109,7 +111,122 @@ int is_nops(dynarec_arm_t *dyn, uintptr_t addr, int n)
     if(n>7 && PK(0)==0x0f && PK(1)==0x1f && PK(2)==0x84 && PK(3)==0x00 && PK(4)==0x00 && PK(5)==0x00 && PK(6)==0x00 && PK(7)==0x00)
         return is_nops(dyn, addr+8, n-8);
     return 0;
-    #undef PK
+}
+
+// return size of next instuciton, -1 is unknown
+// not all instrction are setup
+int next_instruction(dynarec_arm_t *dyn, uintptr_t addr)
+{
+    uint8_t opcode = PK(0);
+    uint8_t nextop;
+    switch (opcode) {
+        case 0x66:
+            opcode = PK(1);
+            switch(opcode) {
+                case 0x90:
+                    return 2;
+            }
+            break;
+        case 0x81:
+            nextop = PK(1);
+            return fakeed(dyn, addr+2, 0, nextop)-addr + 4;
+        case 0x83:
+            nextop = PK(1);
+            return fakeed(dyn, addr+2, 0, nextop)-addr + 1;
+        case 0x84:
+        case 0x85:
+        case 0x88:
+        case 0x89:
+        case 0x8A:
+        case 0x8B:
+        case 0x8C:
+        case 0x8D:
+        case 0x8E:
+        case 0x8F:
+            nextop = PK(1);
+            return fakeed(dyn, addr+2, 0, nextop)-addr;
+        case 0x50:
+        case 0x51:
+        case 0x52:
+        case 0x53:
+        case 0x54:
+        case 0x55:
+        case 0x56:
+        case 0x57:
+        case 0x58:
+        case 0x59:
+        case 0x5A:
+        case 0x5B:
+        case 0x5C:
+        case 0x5D:
+        case 0x5E:
+        case 0x5F:
+        case 0x90:
+        case 0x91:
+        case 0x92:
+        case 0x93:
+        case 0x94:
+        case 0x95:
+        case 0x96:
+        case 0x97:
+        case 0x98:
+        case 0x99:
+        case 0x9B:
+        case 0x9C:
+        case 0x9D:
+        case 0x9E:
+        case 0x9F:
+            return 1;
+        case 0xA0:
+        case 0xA1:
+        case 0xA2:
+        case 0xA3:
+            return 5;
+        case 0xB0:
+        case 0xB1:
+        case 0xB2:
+        case 0xB3:
+        case 0xB4:
+        case 0xB5:
+        case 0xB6:
+        case 0xB7:
+            return 2;
+        case 0xB8:
+        case 0xB9:
+        case 0xBA:
+        case 0xBB:
+        case 0xBC:
+        case 0xBD:
+        case 0xBE:
+        case 0xBF:
+            return 5;
+        case 0xFF:
+            nextop = PK(1);
+            switch((nextop>>3)&7) {
+                case 0: // INC Ed
+                case 1: //DEC Ed
+                case 2: // CALL Ed
+                case 4: // JMP Ed
+                case 6: // Push Ed
+                    return fakeed(dyn, addr+2, 0, nextop)-addr;
+            }
+            break;
+        default:
+            break;
+    }
+    return -1;
+}
+#undef PK
+
+int is_instructions(dynarec_arm_t *dyn, uintptr_t addr, int n)
+{
+    int i = 0;
+    while(i<n) {
+        int j=next_instruction(dyn, addr+i);
+        if(j<=0) return 0;
+        i+=j;
+    }
+    return (i==n)?1:0;
 }
 
 uint32_t needed_flags(dynarec_arm_t *dyn, int ninst, uint32_t setf, int recurse)
@@ -161,17 +278,15 @@ uint32_t needed_flags(dynarec_arm_t *dyn, int ninst, uint32_t setf, int recurse)
 
 instsize_t* addInst(instsize_t* insts, size_t* size, size_t* cap, int x86_size, int arm_size)
 {
-    // x86 instruction is <16 bytes anyway
-    if(!x86_size && !arm_size)
-        return insts;
+    // x86 instruction is <16 bytes
     int toadd;
     if(x86_size>arm_size)
         toadd = 1 + x86_size/15;
     else
         toadd = 1 + arm_size/15;
-    if(*size+toadd>*cap) {
-        *cap = *size+toadd;
-        insts = (instsize_t*)realloc(insts, *cap*sizeof(instsize_t));
+    if((*size)+toadd>(*cap)) {
+        *cap = (*size)+toadd;
+        insts = (instsize_t*)realloc(insts, (*cap)*sizeof(instsize_t));
     }
     while(toadd) {
         if(x86_size>15)
@@ -198,7 +313,6 @@ void arm_pass3(dynarec_arm_t* dyn, uintptr_t addr);
 void* FillBlock(dynablock_t* block, uintptr_t addr) {
     // init the helper
     dynarec_arm_t helper = {0};
-    helper.nolinker = box86_dynarec_linker?(block->parent->nolinker):1;
     helper.start = addr;
     arm_pass0(&helper, addr);
     if(!helper.size) {
@@ -242,17 +356,15 @@ void* FillBlock(dynablock_t* block, uintptr_t addr) {
     arm_pass2(&helper, addr);
     // ok, now allocate mapped memory, with executable flag on
     int sz = helper.arm_size;
-    void* p = (void*)AllocDynarecMap(sz, block->parent->nolinker);
+    void* p = (void*)AllocDynarecMap(block, sz);
     if(p==NULL) {
+        dynarec_log(LOG_DEBUG, "AllocDynarecMap(%p, %d) failed, cancelling block\n", block, sz);
         free(helper.insts);
         free(helper.next);
-        return (void*)block;
+        return NULL;
     }
     helper.block = p;
     helper.arm_start = (uintptr_t)p;
-    helper.tablesz = helper.tablei;
-    if(helper.tablesz)
-        helper.table = (uintptr_t*)calloc(helper.tablesz, sizeof(uintptr_t));
     if(helper.sons_size) {
         helper.sons_x86 = (uintptr_t*)calloc(helper.sons_size, sizeof(uintptr_t));
         helper.sons_arm = (void**)calloc(helper.sons_size, sizeof(void*));
@@ -281,30 +393,27 @@ void* FillBlock(dynablock_t* block, uintptr_t addr) {
     __clear_cache(p, p+sz);   // need to clear the cache before execution...
     // keep size of instructions for signal handling
     {
-        size_t cap = helper.size+1;
+        size_t cap = 1;
+        for(int i=0; i<helper.size; ++i)
+            cap += 1 + ((helper.insts[i].x86.size>helper.insts[i].size)?helper.insts[i].x86.size:helper.insts[i].size)/15;
         size_t size = 0;
         block->instsize = (instsize_t*)calloc(cap, sizeof(instsize_t));
         for(int i=0; i<helper.size; ++i)
             block->instsize = addInst(block->instsize, &size, &cap, helper.insts[i].x86.size, helper.insts[i].size/4);
-        addInst(block->instsize, &size, &cap, 0, 0);    // add a "end of block" mark, just in case
+        block->instsize = addInst(block->instsize, &size, &cap, 0, 0);    // add a "end of block" mark, just in case
     }
     // ok, free the helper now
     free(helper.insts);
     free(helper.next);
-    block->table = helper.table;
-    block->tablesz = helper.tablesz;
-    for (int i=0; i<helper.tablesz/4; ++i)
-        block->table[i*4+2] = (uintptr_t)block;
     block->size = sz;
     block->isize = helper.size;
     block->block = p;
-    block->nolinker = helper.nolinker;
     block->need_test = 0;
     //block->x86_addr = (void*)start;
     block->x86_size = end-start;
     if(box86_dynarec_largest<block->x86_size)
         box86_dynarec_largest = block->x86_size;
-    block->hash = (helper.nolinker)?X31_hash_code(block->x86_addr, block->x86_size):0;
+    block->hash = X31_hash_code(block->x86_addr, block->x86_size);
     // fill sons if any
     dynablock_t** sons = NULL;
     int sons_size = 0;
@@ -312,8 +421,8 @@ void* FillBlock(dynablock_t* block, uintptr_t addr) {
         sons = (dynablock_t**)calloc(helper.sons_size, sizeof(dynablock_t*));
         for (int i=0; i<helper.sons_size; ++i) {
             int created = 1;
-            dynablock_t *son = AddNewDynablock(block->parent, helper.sons_x86[i], 0, &created);
-            if(created) {    // avoid breaking a working block! also, block could be outside this parent...
+            dynablock_t *son = AddNewDynablock(block->parent, helper.sons_x86[i], &created);
+            if(created) {    // avoid breaking a working block!
                 son->block = helper.sons_arm[i];
                 son->x86_addr = (void*)helper.sons_x86[i];
                 son->x86_size = end-helper.sons_x86[i];
@@ -321,6 +430,8 @@ void* FillBlock(dynablock_t* block, uintptr_t addr) {
                 son->father = block;
                 son->done = 1;
                 sons[sons_size++] = son;
+                if(!son->parent)
+                    son->parent = block->parent;
             }
         }
         if(sons_size) {
@@ -329,8 +440,8 @@ void* FillBlock(dynablock_t* block, uintptr_t addr) {
         } else
             free(sons);
     }
-    if(block->parent->nolinker)
-        protectDB((uintptr_t)block->x86_addr, block->x86_size);
+    free(helper.sons_x86);
+    free(helper.sons_arm);
     block->done = 1;
     return (void*)block;
 }

@@ -17,6 +17,7 @@
 #include "x86emu.h"
 #include "box86stack.h"
 #include "callback.h"
+#include "custommem.h"
 #include "khash.h"
 #include "emu/x86run_private.h"
 #include "x86trace.h"
@@ -133,15 +134,17 @@ static void FreeCancelThread(box86context_t* context)
 	kh_foreach_value(context->cancelthread, buff, free(buff))
 	kh_destroy(cancelthread, context->cancelthread);
 	pthread_mutex_unlock(&context->mutex_thread);
-	my_context->cancelthread = NULL;
+	context->cancelthread = NULL;
 }
 static __pthread_unwind_buf_t* AddCancelThread(uintptr_t buff)
 {
 	int ret;
+	pthread_mutex_lock(&my_context->mutex_thread);
 	khint_t k = kh_put(cancelthread, my_context->cancelthread, buff, &ret);
 	if(ret)
 		kh_value(my_context->cancelthread, k) = (__pthread_unwind_buf_t*)calloc(1, sizeof(__pthread_unwind_buf_t));
 	__pthread_unwind_buf_t* r = kh_value(my_context->cancelthread, k);
+	pthread_mutex_unlock(&my_context->mutex_thread);
 	return r;
 }
 
@@ -199,6 +202,15 @@ x86emu_t* thread_get_emu()
 	emuthread_t *et = (emuthread_t*)pthread_getspecific(thread_key);
 	if(!et) {
 		int stacksize = 2*1024*1024;
+		// try to get stack size of the thread
+		pthread_attr_t attr;
+		if(!pthread_getattr_np(pthread_self(), &attr)) {
+			size_t stack_size;
+        	void *stack_addr;
+			if(!pthread_attr_getstack(&attr, &stack_addr, &stack_size))
+				stacksize = stack_size;
+			pthread_attr_destroy(&attr);
+		}
 		void* stack = calloc(1, stacksize);
 		x86emu_t *emu = NewX86Emu(my_context, 0, (uintptr_t)stack, stacksize, 1);
 		SetupX86Emu(emu);
@@ -212,6 +224,15 @@ static void* pthread_routine(void* p)
 {
 	// create the key
 	pthread_once(&thread_key_once, thread_key_alloc);
+	// free current emuthread if it exist
+	{
+		void* t = pthread_getspecific(thread_key);
+		if(t) {
+			// not sure how this could happens
+			printf_log(LOG_INFO, "Clean of an existing ET for Thread %04d\n", GetTID());
+			emuthread_destroy(t);
+		}
+	}
 	pthread_setspecific(thread_key, p);
 	// call the function
 	emuthread_t *et = (emuthread_t*)p;
@@ -236,7 +257,7 @@ EXPORT int my_pthread_attr_destroy(x86emu_t* emu, void* attr)
 	return pthread_attr_destroy(attr);
 }
 
-EXPORT int my_pthread_attr_getstack(x86emu_t* emu, void* attr, void* stackaddr, size_t* stacksize)
+EXPORT int my_pthread_attr_getstack(x86emu_t* emu, void* attr, void** stackaddr, size_t* stacksize)
 {
 	int ret = pthread_attr_getstack(attr, stackaddr, stacksize);
 	if (ret==0)
@@ -279,20 +300,42 @@ EXPORT int my_pthread_create(x86emu_t *emu, void* t, void* attr, void* start_rou
 	}
 
 	emuthread_t *et = (emuthread_t*)calloc(1, sizeof(emuthread_t));
-    x86emu_t *emuthread = NewX86Emu(emu->context, (uintptr_t)start_routine, (uintptr_t)stack, stacksize, own);
+    x86emu_t *emuthread = NewX86Emu(my_context, (uintptr_t)start_routine, (uintptr_t)stack, stacksize, own);
 	SetupX86Emu(emuthread);
 	SetFS(emuthread, GetFS(emu));
 	et->emu = emuthread;
 	et->fnc = (uintptr_t)start_routine;
 	et->arg = arg;
 	#ifdef DYNAREC
-	// pre-creation of the JIT code for the entry point of the thread
-	dynablock_t *current = NULL;
-	DBGetBlock(emu, (uintptr_t)start_routine, 1, &current);
+	if(box86_dynarec) {
+		// pre-creation of the JIT code for the entry point of the thread
+		dynablock_t *current = NULL;
+		DBGetBlock(emu, (uintptr_t)start_routine, 1, &current);
+	}
 	#endif
 	// create thread
 	return pthread_create((pthread_t*)t, (const pthread_attr_t *)attr, 
 		pthread_routine, et);
+}
+
+void* my_prepare_thread(x86emu_t *emu, void* f, void* arg, int ssize, void** pet)
+{
+	int stacksize = (ssize)?ssize:(2*1024*1024);	//default stack size is 2Mo
+	void* stack = malloc(stacksize);
+	emuthread_t *et = (emuthread_t*)calloc(1, sizeof(emuthread_t));
+    x86emu_t *emuthread = NewX86Emu(emu->context, (uintptr_t)f, (uintptr_t)stack, stacksize, 1);
+	SetupX86Emu(emuthread);
+	SetFS(emuthread, GetFS(emu));
+	et->emu = emuthread;
+	et->fnc = (uintptr_t)f;
+	et->arg = arg;
+	#ifdef DYNAREC
+	// pre-creation of the JIT code for the entry point of the thread
+	dynablock_t *current = NULL;
+	DBGetBlock(emu, (uintptr_t)f, 1, &current);
+	#endif
+	*pet =  et;
+	return pthread_routine;
 }
 
 void my_longjmp(x86emu_t* emu, /*struct __jmp_buf_tag __env[1]*/void *p, int32_t __val);
@@ -305,13 +348,13 @@ EXPORT void my___pthread_register_cancel(void* E, void* B)
 {
 	// get a stack local copy of the args, as may be live in some register depending the architecture (like ARM)
 	if(cancel_deep<0) {
-		printf_log(LOG_INFO, "BOX86: Warning, inconsistant value in __pthread_register_cancel (%d)\n", cancel_deep);
+		printf_log(LOG_NONE/*LOG_INFO*/, "BOX86: Warning, inconsistant value in __pthread_register_cancel (%d)\n", cancel_deep);
 		cancel_deep = 0;
 	}
 	if(cancel_deep!=CANCEL_MAX-1) 
 		++cancel_deep;
 	else
-		{printf_log(LOG_INFO, "BOX86: Warning, calling __pthread_register_cancel(...) too many time\n");}
+		{printf_log(LOG_NONE/*LOG_INFO*/, "BOX86: Warning, calling __pthread_register_cancel(...) too many time\n");}
 		
 	cancel_emu[cancel_deep] = (x86emu_t*)E;
 	// on i386, the function as __cleanup_fct_attribute attribute: so 1st parameter is in register
@@ -344,12 +387,11 @@ EXPORT void my___pthread_unwind_next(x86emu_t* emu, void* p)
 {
 	// on i386, the function as __cleanup_fct_attribute attribute: so 1st parameter is in register
 	x86_unwind_buff_t* buff = (x86_unwind_buff_t*)R_EAX;
-	__pthread_unwind_buf_t *pbuff = AddCancelThread((uintptr_t)buff);
-	// function is noreturn, so putting stuff on the stack is not a good idea
-	__pthread_unwind_next(pbuff);
-	// just in case it does return
-	// no clear way to clean up this, unless it does return...
+	__pthread_unwind_buf_t pbuff = *AddCancelThread((uintptr_t)buff);
 	DelCancelThread((uintptr_t)buff);
+	// function is noreturn, putting stuff on the stack to have it auto-free (is that correct?)
+	__pthread_unwind_next(&pbuff);
+	// just in case it does return
 	emu->quit = 1;
 }
 
@@ -648,6 +690,72 @@ EXPORT void my_pthread_exit(x86emu_t* emu, void* retval)
 	pthread_exit(retval);
 }
 
+#ifndef NOALIGN
+// mutex alignment
+KHASH_MAP_INIT_INT(mutex, pthread_mutex_t*)
+
+static kh_mutex_t* unaligned_mutex = NULL;
+
+pthread_mutex_t* getAlignedMutex(pthread_mutex_t* m)
+{
+	if(!(((uintptr_t)m)&3))
+		return m;
+	khint_t k = kh_get(mutex, unaligned_mutex, (uintptr_t)m);
+	if(k!=kh_end(unaligned_mutex))
+		return kh_value(unaligned_mutex, k);
+	int r;
+	k = kh_put(mutex, unaligned_mutex, (uintptr_t)m, &r);
+	pthread_mutex_t* ret = kh_value(unaligned_mutex, k) = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+	memcpy(ret, m, sizeof(pthread_mutex_t));
+	return ret;
+}
+EXPORT int my_pthread_mutex_destroy(pthread_mutex_t *m)
+{
+	if(!(((uintptr_t)m)&3))
+		return pthread_mutex_destroy(m);
+	khint_t k = kh_get(mutex, unaligned_mutex, (uintptr_t)m);
+	if(k!=kh_end(unaligned_mutex)) {
+		pthread_mutex_t *n = kh_value(unaligned_mutex, k);
+		kh_del(mutex, unaligned_mutex, k);
+		int ret = pthread_mutex_destroy(n);
+		free(n);
+		return ret;
+	}
+	return pthread_mutex_destroy(m);
+}
+int my___pthread_mutex_destroy(pthread_mutex_t *m) __attribute__((alias("my_pthread_mutex_destroy")));
+
+EXPORT int my_pthread_mutex_init(pthread_mutex_t *m, pthread_mutexattr_t *att)
+{
+	return pthread_mutex_init(getAlignedMutex(m), att);
+}
+EXPORT int my___pthread_mutex_init(pthread_mutex_t *m, pthread_mutexattr_t *att) __attribute__((alias("my_pthread_mutex_init")));
+
+EXPORT int my_pthread_mutex_lock(pthread_mutex_t *m)
+{
+	return pthread_mutex_lock(getAlignedMutex(m));
+}
+EXPORT int my___pthread_mutex_lock(pthread_mutex_t *m) __attribute__((alias("my_pthread_mutex_lock")));
+
+EXPORT int my_pthread_mutex_timedlock(pthread_mutex_t *m, const struct timespec * t)
+{
+	return pthread_mutex_timedlock(getAlignedMutex(m), t);
+}
+EXPORT int my___pthread_mutex_trylock(pthread_mutex_t *m, const struct timespec * t) __attribute__((alias("my_pthread_mutex_timedlock")));
+
+EXPORT int my_pthread_mutex_trylock(pthread_mutex_t *m)
+{
+	return pthread_mutex_trylock(getAlignedMutex(m));
+}
+EXPORT int my___pthread_mutex_unlock(pthread_mutex_t *m) __attribute__((alias("my_pthread_mutex_trylock")));
+
+EXPORT int my_pthread_mutex_unlock(pthread_mutex_t *m)
+{
+	return pthread_mutex_unlock(getAlignedMutex(m));
+}
+
+#endif
+
 static void emujmpbuf_destroy(void* p)
 {
 	emu_jmpbuf_t *ej = (emu_jmpbuf_t*)p;
@@ -673,12 +781,15 @@ void init_pthread_helper()
 	InitCancelThread();
 	mapcond = kh_init(mapcond);
 	pthread_key_create(&jmpbuf_key, emujmpbuf_destroy);
+#ifndef NOALIGN
+	unaligned_mutex = kh_init(mutex);
+#endif
 }
 
-void fini_pthread_helper()
+void fini_pthread_helper(box86context_t* context)
 {
-	FreeCancelThread(my_context);
-	CleanStackSize(my_context);
+	FreeCancelThread(context);
+	CleanStackSize(context);
 	pthread_cond_t *cond;
 	kh_foreach_value(mapcond, cond, 
 		pthread_cond_destroy(cond);
@@ -686,4 +797,12 @@ void fini_pthread_helper()
 	);
 	kh_destroy(mapcond, mapcond);
 	mapcond = NULL;
+#ifndef NOALIGN
+	pthread_mutex_t *m;
+	kh_foreach_value(unaligned_mutex, m, 
+		pthread_mutex_destroy(m);
+		free(m);
+	);
+	kh_destroy(mutex, unaligned_mutex);
+#endif
 }

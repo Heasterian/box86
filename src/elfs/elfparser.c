@@ -254,12 +254,20 @@ elfheader_t* ParseElfHeader(FILE* f, const char* name, int exec)
         int ii = FindSection(h->SHEntries, h->numSHEntries, h->SHStrTab, ".got.plt");
         if(ii) {
             h->gotplt = h->SHEntries[ii].sh_addr;
+            h->gotplt_end = h->gotplt + h->SHEntries[ii].sh_size;
             printf_log(LOG_DEBUG, "The GOT.PLT Table is at address %p\n", (void*)h->gotplt);
         }
         ii = FindSection(h->SHEntries, h->numSHEntries, h->SHStrTab, ".got");
         if(ii) {
             h->got = h->SHEntries[ii].sh_addr;
-            printf_log(LOG_DEBUG, "The GOT Table is at address %p\n", (void*)h->got);
+            h->got_end = h->got + h->SHEntries[ii].sh_size;
+            printf_log(LOG_DEBUG, "The GOT Table is at address %p..%p\n", (void*)h->got, (void*)h->got_end);
+        }
+        ii = FindSection(h->SHEntries, h->numSHEntries, h->SHStrTab, ".plt");
+        if(ii) {
+            h->plt = h->SHEntries[ii].sh_addr;
+            h->plt_end = h->plt + h->SHEntries[ii].sh_size;
+            printf_log(LOG_DEBUG, "The PLT Table is at address %p..%p\n", (void*)h->plt, (void*)h->plt_end);
         }
         // look for .init entry point
         ii = FindSection(h->SHEntries, h->numSHEntries, h->SHStrTab, ".init");

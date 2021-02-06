@@ -53,6 +53,7 @@ const char* libdlName = "libdl.so.2";
 
 #define CLEARERR    if(dl->last_error) free(dl->last_error); dl->last_error = NULL;
 
+extern int box86_zoom;
 // Implementation
 void* my_dlopen(x86emu_t* emu, void *filename, int flag)
 {
@@ -66,6 +67,11 @@ void* my_dlopen(x86emu_t* emu, void *filename, int flag)
     CLEARERR
     if(filename) {
         char* rfilename = (char*)filename;
+        if(box86_zoom && strstr(rfilename, "/libturbojpeg.so")) {
+            void* sys = my_dlopen(emu, "libturbojpeg.so.0", flag);
+            if(sys)
+                return sys;
+        }
         if(dlsym_error && box86_log<LOG_DEBUG) {
             printf_log(LOG_NONE, "Call to dlopen(\"%s\"/%p, %X)\n", rfilename, filename, flag);
         }
@@ -132,6 +138,9 @@ void* my_dlopen(x86emu_t* emu, void *filename, int flag)
 }
 void* my_dlmopen(x86emu_t* emu, void* lmid, void *filename, int flag)
 {
+    if(lmid) {
+        printf_log(LOG_INFO, "Warning, dlmopen(%p, %p(\"%s\"), 0x%x) called with lmid not LMID_ID_BASE (unsupported)\n", lmid, filename, filename?(char*)filename:"self", flag);
+    }
     // lmid is ignored for now...
     return my_dlopen(emu, filename, flag);
 }
@@ -153,7 +162,7 @@ int recursive_dlsym_lib(kh_libs_t* collection, library_t* lib, const char* rsymb
     int ret;
     kh_put(libs, collection, (uintptr_t)lib, &ret);
     // look in the library itself
-    if(lib->get(lib, rsymbol, start, end)!=0)
+    if(lib->get(lib, rsymbol, start, end))
         return 1;
     // look in other libs
     int n = GetNeededLibN(lib);

@@ -5,15 +5,17 @@ option(PYRA "Set to ON if targeting an OpenPandora device" ${PYRA})
 option(RPI2 "Set to ON if targeting an RaspberryPI2 device" ${RPI2})
 option(RPI3 "Set to ON if targeting an RaspberryPI3 device" ${RPI3})
 option(RPI4 "Set to ON if targeting an RaspberryPI4 device" ${RPI4})
+option(RPI4ARM64 "Set to ON if targeting an RaspberryPI4 device with multiarch arm64 and armhf" ${RPI4ARM64})
 option(RK3399 "Set to ON if targeting an Rockchip RK3399 based device" ${RK3399})
 option(GAMESHELL "Set to ON if targeting a GameShell device" ${GAMESHELL})
 option(ODROID "Set to ON if targeting an ODroid device" ${ODROID})
+option(POWER9 "Set to ON if targeting a POWER9 processor" ${POWER9})
 option(USE_CCACHE "Set to ON to use ccache if present in the system" ${USE_CCACHE})
 option(HAVE_TRACE "Set to ON to have Trace ability (needs ZydisInfo library)" ${HAVE_TRACE})
 option(NOLOADADDR "Set to ON to avoid fixing the load address of Box86" ${NO_LOADAADR})
 option(NOGETCLOCK "Set to ON to avoid using clock_gettime with CLOCK_MONOTONIC_COARSE for RDTSC opcode (use gltimeofday instead)" ${NOGETCLOCK})
 option(NOGIT "Set to ON if not building from a git clone repo (like when building from a zip download from github)" ${NOGIT})
-if(PANDORA OR PYRA OR RPI2 OR RPI3 OR RPI4 OR GAMESHELL OR ODROID OR RK3399)
+if(PANDORA OR PYRA OR RPI2 OR RPI3 OR RPI4 OR GAMESHELL OR ODROID OR RK3399 OR RPI4ARM64)
     set(LD80BITS OFF CACHE BOOL "")
     set(NOALIGN OFF CACHE BOOL "")
     set(ARM_DYNAREC ON CACHE BOOL "")
@@ -21,6 +23,8 @@ endif()
 option(LD80BITS "Set to ON if host device have 80bits long double (i.e. i386)" ${LD80BITS})
 option(NOALIGN "Set to ON if host device doesn't need re-align (i.e. i386)" ${NOALIGN})
 option(ARM_DYNAREC "Set to ON to use ARM Dynamic Recompilation (WIP, don't use yet)" ${ARM_DYNAREC})
+option(POWERPCLE "Set to ON if targeting a little-endian PowerPC device" ${POWERPCLE})
+option(SYSV_VARARG "Set to ON if host device uses SysVR4 vararg calling convention" ${SYSV_VARARG})
 
 if(${CMAKE_VERSION} VERSION_LESS "3.12.2")
     find_package(PythonInterp 3)
@@ -38,7 +42,7 @@ else()
     set(PYTHON_EXECUTABLE ${Python3_EXECUTABLE} CACHE INTERNAL "The Python3 executable" FORCE)
 endif()
 
-if(RK3399)
+if(RK3399 OR RPI4ARM64)
     set(CMAKE_C_COMPILER arm-linux-gnueabihf-gcc)
     #set(CMAKE_ASM_COMPILER arm-linux-gnueabihf-as) #will use gcc in fact
     set(CMAKE_C_COMPILER_TARGET arm-linux-gnueabihf)
@@ -84,6 +88,12 @@ endif()
 if(RPI4)
     add_definitions(-DRPI)
     add_definitions(-DRPI4)
+    add_definitions(-marm -march=armv8-a+crc -mtune=cortex-a73.cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard)
+    set(CMAKE_ASM_FLAGS  "-marm -march=armv8-a+crc -mtune=cortex-a73.cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard")
+endif()
+if(RPI4ARM64)
+    add_definitions(-DRPI)
+    add_definitions(-DRPI4ARM64)
     add_definitions(-marm -march=armv8-a+crc -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard)
     set(CMAKE_ASM_FLAGS  "-marm -march=armv8-a+crc -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard")
 endif()
@@ -96,6 +106,10 @@ if(RK3399)
     add_definitions(-DRK3399)
     add_definitions(-pipe -march=armv8-a+crc+simd+crypto -mcpu=cortex-a72+crypto)
     set(CMAKE_ASM_FLAGS  "-pipe -march=armv8-a+crc+simd+crypto -mcpu=cortex-a72+crypto")
+endif()
+
+if(POWER9)
+  add_definitions(-mcpu=power9 -mtune=power9)
 endif()
 
 if(NOGIT)
@@ -130,6 +144,14 @@ if(ARM_DYNAREC)
     add_definitions(-DARM)
     add_definitions(-marm)
     enable_language(ASM)
+endif()
+
+if(POWERPCLE)
+  add_definitions(-DPOWERPCLE)
+endif()
+
+if(SYSV_VARARG)
+  add_definitions(-DSYSV_VARARG)
 endif()
 
 if(NOGETCLOCK)
@@ -176,6 +198,7 @@ set(ELFLOADER_SRC
     "${BOX86_ROOT}/src/main.c"
     "${BOX86_ROOT}/src/box86context.c"
     "${BOX86_ROOT}/src/build_info.c"
+    "${BOX86_ROOT}/src/custommem.c"
     "${BOX86_ROOT}/src/tools/bridge.c"
     "${BOX86_ROOT}/src/tools/pathcoll.c"
     "${BOX86_ROOT}/src/tools/fileutils.c"
@@ -232,6 +255,7 @@ set(WRAPPEDS
     "${BOX86_ROOT}/src/wrapped/wrappedsdl2.c"
     "${BOX86_ROOT}/src/wrapped/wrappedsdl2mixer.c"
     "${BOX86_ROOT}/src/wrapped/wrappedsdl2image.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedsdl2ttf.c"
     "${BOX86_ROOT}/src/wrapped/wrappedsmpeg.c"
     "${BOX86_ROOT}/src/wrapped/wrappedsmpeg2.c"
     "${BOX86_ROOT}/src/wrapped/wrappedvorbisfile.c"
@@ -273,6 +297,7 @@ set(WRAPPEDS
     "${BOX86_ROOT}/src/wrapped/wrappedalut.c"
     "${BOX86_ROOT}/src/wrapped/wrappedlibjpeg.c"
     "${BOX86_ROOT}/src/wrapped/wrappedlibjpeg62.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedturbojpeg.c"
     "${BOX86_ROOT}/src/wrapped/wrappedcurl.c"
     "${BOX86_ROOT}/src/wrapped/wrappedudev0.c"
     "${BOX86_ROOT}/src/wrapped/wrappedudev1.c"
@@ -329,7 +354,16 @@ set(WRAPPEDS
     "${BOX86_ROOT}/src/wrapped/wrappedd3dadapter9.c"
     "${BOX86_ROOT}/src/wrapped/wrappedvulkan.c"
     "${BOX86_ROOT}/src/wrapped/wrappedwaylandclient.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedxml2.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedxslt.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedldapr.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedlber.c"
+    "${BOX86_ROOT}/src/wrapped/wrappednsl.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedlcms2.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedkrb5.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedgssapikrb5.c"
     "${BOX86_ROOT}/src/wrapped/wrappedldlinux.c"
+    "${BOX86_ROOT}/src/wrapped/wrappedcrashhandler.c"
 )
 
 set(WRAPPEDS_HEAD "${BOX86_ROOT}/src/wrapped/wrappedd3dadapter9_gen.h")
@@ -343,7 +377,10 @@ set(WRAPPER "${BOX86_ROOT}/src/wrapped/generated/wrapper.c" "${BOX86_ROOT}/src/w
 
 add_custom_command(
     OUTPUT "${BOX86_ROOT}/src/wrapped/generated/functions_list.txt"
-    COMMAND "${PYTHON_EXECUTABLE}" "${BOX86_ROOT}/rebuild_wrappers.py" "${BOX86_ROOT}" "PANDORA" "HAVE_LD80BITS" "NOALIGN" "HAVE_TRACE" "--" ${WRAPPEDS_HEAD}
+    COMMAND "${PYTHON_EXECUTABLE}" "${BOX86_ROOT}/rebuild_wrappers.py" 
+    "${BOX86_ROOT}" 
+    "PANDORA" "HAVE_LD80BITS" "NOALIGN" "HAVE_TRACE" "POWERPCLE" "--" 
+    ${WRAPPEDS_HEAD}
     MAIN_DEPENDENCY "${BOX86_ROOT}/rebuild_wrappers.py"
     DEPENDS ${WRAPPEDS} ${WRAPPEDS_HEAD}
     BYPRODUCTS ${WRAPPER}
@@ -370,8 +407,7 @@ if(ARM_DYNAREC)
 
         "${BOX86_ROOT}/src/dynarec/arm_prolog.S"
         "${BOX86_ROOT}/src/dynarec/arm_epilog.S"
-        "${BOX86_ROOT}/src/dynarec/arm_linker.S"
-        "${BOX86_ROOT}/src/dynarec/arm_table.S"
+        "${BOX86_ROOT}/src/dynarec/arm_next.S"
         "${BOX86_ROOT}/src/dynarec/arm_lock_helper.S"
     )
 

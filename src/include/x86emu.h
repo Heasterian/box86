@@ -13,6 +13,7 @@ void CloneEmu(x86emu_t *newemu, const x86emu_t* emu);
 void SetTraceEmu(uintptr_t trace_start, uintptr_t trace_end);
 
 box86context_t* GetEmuContext(x86emu_t* emu);
+uint32_t* GetParityTab();
 
 uint32_t GetEAX(x86emu_t *emu);
 uint64_t GetEDXEAX(x86emu_t *emu);
@@ -29,6 +30,7 @@ void SetFS(x86emu_t *emu, uint16_t v);
 uint16_t GetFS(x86emu_t *emu);
 uint32_t GetESP(x86emu_t *emu);
 void ResetFlags(x86emu_t *emu);
+void ResetSegmentsCache(x86emu_t *emu);
 const char* DumpCPURegs(x86emu_t* emu, uintptr_t ip);
 
 void StopEmu(x86emu_t* emu, const char* reason);

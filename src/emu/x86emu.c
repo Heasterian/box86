@@ -15,6 +15,10 @@
 #include "x86run.h"
 #include "x86run_private.h"
 #include "callback.h"
+#include "bridge.h"
+#ifdef DYNAREC
+#include "custommem.h"
+#endif
 
 typedef struct cleanup_s {
     void*       f;
@@ -34,15 +38,20 @@ static uint32_t x86emu_parity_tab[8] =
 	0x69969669,
 };
 
-static uint8_t EndEmuMarker[] = {0xcc, 'S', 'C', 0, 0, 0, 0};
+uint32_t* GetParityTab()
+{
+    return x86emu_parity_tab;
+}
+
 void PushExit(x86emu_t* emu)
 {
-    Push(emu, (uint32_t)&EndEmuMarker);
+    uintptr_t endMarker = AddCheckBridge(my_context->system, NULL, NULL, 0);
+    Push(emu, endMarker);
 }
 
 void* GetExit()
 {
-    return &EndEmuMarker;
+    return (void*)AddCheckBridge(my_context->system, NULL, NULL, 0);
 }
 
 static void internalX86Setup(x86emu_t* emu, box86context_t *context, uintptr_t start, uintptr_t stack, int stacksize, int ownstack)
@@ -53,8 +62,7 @@ static void internalX86Setup(x86emu_t* emu, box86context_t *context, uintptr_t s
         emu->sbiidx[i] = &emu->regs[i];
     emu->sbiidx[4] = &emu->zero;
     emu->x86emu_parity_tab = x86emu_parity_tab;
-    emu->packed_eflags.x32 = 0x202; // default flags?
-    UnpackFlags(emu);
+    emu->eflags.x32 = 0x202; // default flags?
     // own stack?
     emu->stack2free = (ownstack)?(void*)stack:NULL;
     emu->init_stack = (void*)stack;
@@ -158,6 +166,8 @@ void CallAllCleanup(x86emu_t *emu)
         RunFunctionWithEmu(emu, 0, (uintptr_t)(my_context->cleanups[i].f), my_context->cleanups[i].arg, my_context->cleanups[i].a );
     }
     my_context->clean_sz = 0;
+    free(my_context->cleanups);
+    my_context->cleanups = NULL;
 }
 
 static void internalFreeX86(x86emu_t* emu)
@@ -170,7 +180,7 @@ void FreeX86Emu(x86emu_t **emu)
 {
     if(!emu)
         return;
-    printf_log(LOG_DEBUG, "Free a X86 Emu (%p)\n", *emu);
+    printf_log(LOG_DEBUG, "%04d|Free a X86 Emu (%p)\n", GetTID(), *emu);
 
     internalFreeX86(*emu);
 
@@ -182,7 +192,7 @@ void FreeX86EmuFromStack(x86emu_t **emu)
 {
     if(!emu)
         return;
-    printf_log(LOG_DEBUG, "Free a X86 Emu from stack (%p)\n", *emu);
+    printf_log(LOG_DEBUG, "%04d|Free a X86 Emu from stack (%p)\n", GetTID(), *emu);
 
     internalFreeX86(*emu);
 }
@@ -191,11 +201,10 @@ void CloneEmu(x86emu_t *newemu, const x86emu_t* emu)
 {
 	memcpy(newemu->regs, emu->regs, sizeof(emu->regs));
     memcpy(&newemu->ip, &emu->ip, sizeof(emu->ip));
-	memcpy(&newemu->packed_eflags, &emu->packed_eflags, sizeof(emu->packed_eflags));
-    memcpy(&newemu->flags, &emu->flags, sizeof(emu->flags));
+	memcpy(&newemu->eflags, &emu->eflags, sizeof(emu->eflags));
     newemu->old_ip = emu->old_ip;
     memcpy(newemu->segs, emu->segs, sizeof(emu->segs));
-    memset(newemu->segs_clean, 0, sizeof(newemu->segs_clean));
+    memset(newemu->segs_serial, 0, sizeof(newemu->segs_serial));
 	memcpy(newemu->fpu, emu->fpu, sizeof(emu->fpu));
     memcpy(newemu->fpu_ld, emu->fpu_ld, sizeof(emu->fpu_ld));
     memcpy(newemu->fpu_ll, emu->fpu_ll, sizeof(emu->fpu_ll));
@@ -353,8 +362,8 @@ void UnimpOpcode(x86emu_t* emu)
     R_EIP = emu->old_ip;
 
     int tid = syscall(SYS_gettid);
-    printf_log(LOG_NONE, "%04d|%p: Unimplemented Opcode %02X %02X %02X %02X %02X %02X %02X %02X\n", 
-        tid, (void*)emu->old_ip,
+    printf_log(LOG_NONE, "%04d|%p: Unimplemented Opcode (%02X) %02X %02X %02X %02X %02X %02X %02X %02X\n", 
+        tid, (void*)emu->old_ip, Peek(emu, -1),
         Peek(emu, 0), Peek(emu, 1), Peek(emu, 2), Peek(emu, 3),
         Peek(emu, 4), Peek(emu, 5), Peek(emu, 6), Peek(emu, 7));
     emu->quit=1;
@@ -459,4 +468,11 @@ uint64_t ReadTSC(x86emu_t* emu)
   gettimeofday(&tv, NULL);
   return (uint64_t)(tv.tv_sec) * 1000000 + tv.tv_usec;
 #endif
+}
+
+void ResetSegmentsCache(x86emu_t *emu)
+{
+    if(!emu)
+        return;
+    memset(emu->segs_serial, 0, sizeof(emu->segs_serial));
 }

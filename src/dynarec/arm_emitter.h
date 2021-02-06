@@ -21,12 +21,13 @@ Op is 20-27
 #define xEBP    9
 #define xESI    10
 #define xEDI    11
-#define xEIP    12
+#define xFlags  12
+#define xEIP    14
 // scratch registers
 #define x1      1
 #define x2      2
 #define x3      3
-#define x12     12
+#define x14     14
 // emu is r0
 #define xEmu    0
 // ARM SP is r13
@@ -77,13 +78,17 @@ Op is 20-27
 // movt dst, #imm16
 #define MOVT(dst, imm16) EMIT(0xe3400000 | ((dst) << 12) | (((imm16) & 0xf000) << 4) | brIMM((imm16) & 0x0fff) )
 // pseudo insruction: mov reg, #imm with imm a 32bits value
-#define MOV32(dst, imm32)                   \
-    MOVW(dst, ((uint32_t)imm32)&0xffff);    \
-    if (((uint32_t)(imm32))>>16) {            \
-        MOVT(dst, (((uint32_t)imm32)>>16)); }
+#define MOV32(dst, imm32)                                   \
+    if(~(uint32_t)(imm32)>=0 && ~(uint32_t)(imm32)<256) {   \
+        MVN_IMM8(dst, dst, ~(uint32_t)(imm32), 0);          \
+    } else {                                                \
+        MOVW(dst, ((uint32_t)imm32)&0xffff);                \
+        if (((uint32_t)(imm32))>>16) {                      \
+        MOVT(dst, (((uint32_t)imm32)>>16));}                \
+    }
 // pseudo insruction: mov reg, #imm with imm a 32bits value, fixed size
-#define MOV32_(dst, imm32)                   \
-    MOVW(dst, ((uint32_t)(imm32))&0xffff);    \
+#define MOV32_(dst, imm32)                  \
+    MOVW(dst, ((uint32_t)(imm32))&0xffff);  \
     MOVT(dst, (((uint32_t)(imm32))>>16))
 // movw.cond dst, #imm16
 #define MOVW_COND(cond, dst, imm16) EMIT(cond | 0x03000000 | ((dst) << 12) | (((imm16) & 0xf000) << 4) | brIMM((imm16) & 0x0fff) )
@@ -96,6 +101,8 @@ Op is 20-27
 #define MOV_REG_LSL_IMM5(dst, src, imm5) EMIT(0xe1a00000 | ((dst) << 12) | (src) | (0<<4) | (0<<5) | ((imm5)<<7))
 // mov dst, src lsr imm5
 #define MOV_REG_LSR_IMM5(dst, src, imm5) EMIT(0xe1a00000 | ((dst) << 12) | (src) | (0<<4) | (1<<5) | ((imm5)<<7))
+// mov.cond dst, src lsr imm5
+#define MOV_REG_LSR_IMM5_COND(cond, dst, src, imm5) EMIT(cond | 0x01a00000 | ((dst) << 12) | (src) | (0<<4) | (1<<5) | ((imm5)<<7))
 // mov dst, src asr imm5
 #define MOV_REG_ASR_IMM5(dst, src, imm5) EMIT(0xe1a00000 | ((dst) << 12) | (src) | (0<<4) | (2<<5) | ((imm5)<<7))
 // mov dst, src ror imm5
@@ -109,8 +116,14 @@ Op is 20-27
 // mov.s dst, src ror imm5
 #define MOVS_REG_ROR_IMM5(dst, src, imm5) EMIT(0xe1b00000 | ((dst) << 12) | (src) | (0<<4) | (3<<5) | ((imm5)<<7))
 
+// mov.s dst, src lsl rs
+#define MOVS_REG_LSL_REG(dst, src, rs) EMIT(0xe1b00000 | ((dst) << 12) | (src) | (1<<4) | (0<<5) | ((rs)<<8))
+// mov.s dst, src lsr rs
+#define MOVS_REG_LSR_REG(dst, src, rs) EMIT(0xe1b00000 | ((dst) << 12) | (src) | (1<<4) | (1<<5) | ((rs)<<8))
 // mov dst, src lsl rs
 #define MOV_REG_LSL_REG(dst, src, rs) EMIT(0xe1a00000 | ((dst) << 12) | (src) | (1<<4) | (0<<5) | ((rs)<<8))
+// mov.cond dst, src lsl rs
+#define MOV_REG_LSL_REG_COND(cond, dst, src, rs) EMIT(cond | 0x01a00000 | ((dst) << 12) | (src) | (1<<4) | (0<<5) | ((rs)<<8))
 // mov dst, src lsr rs
 #define MOV_REG_LSR_REG(dst, src, rs) EMIT(0xe1a00000 | ((dst) << 12) | (src) | (1<<4) | (1<<5) | ((rs)<<8))
 // mov dst, src asr rs
@@ -210,6 +223,12 @@ Op is 20-27
 // cmp.s dst, src1, src2, lsl #imm
 #define CMPS_REG_LSL_IMM5(src1, src2, imm5) \
     EMIT(0xe1500000 | ((0) << 12) | ((src1) << 16) | brLSL(imm5, src2) )
+// cmp.cond.s dst, src1, src2, lsl #imm
+#define CMPS_REG_LSL_IMM5_COND(cond, src1, src2, imm5) \
+    EMIT((cond) | 0x01500000 | ((0) << 12) | ((src1) << 16) | brLSL(imm5, src2) )
+// cmp.s dst, src, #imm
+#define CMPS_IMM8_COND(cond, src, imm8) \
+    EMIT((cond) | 0x03500000 | ((0) << 12) | ((src) << 16) | brIMM(imm8) )
 // cmp.s dst, src, #imm
 #define CMPS_IMM8(src, imm8) \
     EMIT(0xe3500000 | ((0) << 12) | ((src) << 16) | brIMM(imm8) )
@@ -228,13 +247,22 @@ Op is 20-27
 // orr.s dst, src1, src2, lsl #imm
 #define ORRS_REG_LSL_IMM5(dst, src1, src2, imm5) \
     EMIT(0xe1900000 | ((dst) << 12) | ((src1) << 16) | brLSL(imm5, src2) )
+// orr dst, src1, src2, lsr #imm
+#define ORR_REG_LSR_IMM5(dst, src1, src2, imm5) \
+    EMIT(0xe1800000 | ((dst) << 12) | ((src1) << 16) | brLSR(imm5, src2) )
+// orr.s dst, src1, src2, lsr #imm
+#define ORRS_REG_LSR_IMM5(dst, src1, src2, imm5) \
+    EMIT(0xe1900000 | ((dst) << 12) | ((src1) << 16) | brLSR(imm5, src2) )
 // orr dst, src1, #imm8
 #define ORR_IMM8(dst, src, imm8, rot) \
     EMIT(0xe3800000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | imm8 )
 // orr.s dst, src1, #imm8
 #define ORRS_IMM8(dst, src, imm8, rot) \
     EMIT(0xe3900000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | imm8 )
-// orr dst, src1, src2, lsl #rs
+// orr.cond dst, src1, #imm8
+#define ORR_IMM8_COND(cond, dst, src, imm8, rot) \
+    EMIT((cond) | 0x03800000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | imm8 )
+// orr dst, src1, src2, lsl rs
 #define ORR_REG_LSL_REG(dst, src1, src2, rs) \
     EMIT(0xe1800000 | ((dst) << 12) | ((src1) << 16) | brRLSL(rs, src2) )
 // xor dst, src1, src2, lsl #imm
@@ -259,12 +287,18 @@ Op is 20-27
 // xor dst, src1, src2, lsl #imm
 #define XOR_REG_LSR_IMM8(dst, src1, src2, imm8) \
     EMIT(0xe0200000 | ((dst) << 12) | ((src1) << 16) | brLSR(imm8, src2) )
+// xor.cond dst, src1, src2, lsl #imm
+#define XOR_REG_LSR_IMM8_COND(cond, dst, src1, src2, imm8) \
+    EMIT(cond | 0x00200000 | ((dst) << 12) | ((src1) << 16) | brLSR(imm8, src2) )
 // bic dst, src1, src2, lsl #imm
 #define BIC_REG_LSL_IMM5(dst, src1, src2, imm5) \
     EMIT(0xe1c00000 | ((dst) << 12) | ((src1) << 16) | brLSL(imm5, src2) )
 // bic dst, src, IMM8
 #define BIC_IMM8(dst, src, imm8, rot) \
     EMIT(0xe3c00000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | imm8 )
+// bic.cond dst, src, IMM8
+#define BIC_IMM8_COND(cond, dst, src, imm8, rot) \
+    EMIT((cond) | 0x03c00000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | imm8 )
 // bic.s dst, src1, #imm ror rot*2
 #define BICS_IMM8_ROR(dst, src, imm8, rot) \
     EMIT(0xe3d00000 | ((dst) << 12) | ((src) << 16) | ((rot)<<8) | brIMM(imm8) )
@@ -321,6 +355,8 @@ Op is 20-27
 #define STR_IMM9(reg, addr, imm9) EMIT(0xe5000000 | (((imm9)<0)?0:1)<<23 | ((reg) << 12) | ((addr) << 16) | brIMM(imm9) )
 // str with cond reg, [addr, #+/-imm9]
 #define STR_IMM9_COND(cond, reg, addr, imm9) EMIT(cond | 0x05000000 | (((imm9)<0)?0:1)<<23 | ((reg) << 12) | ((addr) << 16) | brIMM(imm9) )
+// str reg, [addr, #+/-imm9]!
+#define STR_IMM9_W(reg, addr, imm9) EMIT(0xe5200000 | (((imm9)<0)?0:1)<<23 | ((reg) << 12) | ((addr) << 16) | brIMM(imm9) )
 // strb reg, [addr, #+/-imm9]
 #define STRB_IMM9(reg, addr, imm9) EMIT(0xe5400000 | (((imm9)<0)?0:1)<<23 | ((reg) << 12) | ((addr) << 16) | brIMM(imm9) )
 // str reg, [addr], #+/-imm9
@@ -358,9 +394,15 @@ Op is 20-27
 //                           all |    const    |pre-index| subs    | no PSR  |writeback| store   |   base    |reg list
 #define PUSH(reg, list) EMIT(c__ | (0b100<<25) | (1<<24) | (0<<23) | (0<<22) | (1<<21) | (0<<20) | ((reg)<<16) | (list))
 
+// push reg to xESP
+#define PUSH1(reg)   STR_IMM9_W(reg, xESP, -4)
+
 // pop reg!, {list}
 //                           all |    const    |postindex|  add    | no PSR  |writeback|  load   |   base    |reg list
 #define POP(reg, list)  EMIT(c__ | (0b100<<25) | (0<<24) | (1<<23) | (0<<22) | (1<<21) | (1<<20) | ((reg)<<16) | (list))
+
+// pop reg from xESP
+#define POP1(reg)   LDRAI_IMM9_W(reg, xESP, 4)
 
 // STMDB reg, {list}
 //                            all |    const    |pre-index| subs    | no PSR  |  no wb  | store   |   base    |reg list
@@ -427,12 +469,20 @@ Op is 20-27
 // BFI_COND: Bit Field Insert with condition: copy any number of low order bit from Rn to any position of Rd
 #define BFI_COND(cond, rd, rn, lsb, width) EMIT(cond | (0b0111110<<21) | (((lsb)+(width)-1)<<16) | ((rd)<<12) | ((lsb)<<7) | (0b001<<4) | (rn))
 
+// BFC: Bit Field Clear: clear any number of adjacent bit from Rd
+#define BFC(rd, lsb, width) EMIT(c__ | (0b0111110<<21) | (((lsb)+(width)-1)<<16) | ((rd)<<12) | ((lsb)<<7) | (0b001<<4) | 0b1111)
+// BFC_COND: Bit Field Clear with condition: clear any number of adjacent bit from Rd
+#define BFC_COND(cond, rd, lsb, width) EMIT(cond | (0b0111110<<21) | (((lsb)+(width)-1)<<16) | ((rd)<<12) | ((lsb)<<7) | (0b001<<4) | 0b1111)
+
 // REV: Reverse byte of a 32bits word
 #define REV(rd, rm) EMIT(c__ | (0b01101<<23) | (0<<22) | (0b11<<20) | (0b1111<<16) | ((rd)<<12) | (0b1111<<8) | (0b0011<<4) | (rm))
 
 #define SSAT_gen(cond, sat_imm, Rd, imm5, sh, Rn) (cond | 0b0110101<<21 | (sat_imm)<<16 | (Rd)<<12 | (imm5)<<7 | (sh)<<6 | 0b01<<4 | (Rn))
 // Signed Staturate Rn to 2^(staturate_to-1) into Rd. Optionnaly shift left Rn before saturate
 #define SSAT_REG_LSL_IMM5(Rd, saturate_to, Rn, shift)   EMIT(SSAT_gen(c__, (saturate_to)-1, Rd, shift, 0, Rn))
+// Signed Staturate Rn to 2^(staturate_to-1) into Rd. Optionnaly shift left Rn before saturate
+#define SSAT_REG_LSL_IMM5_COND(cond, Rd, saturate_to, Rn, shift)   EMIT(SSAT_gen((cond), (saturate_to)-1, Rd, shift, 0, Rn))
+
 #define USAT_gen(cond, sat_imm, Rd, imm5, sh, Rn) (cond | 0b0110111<<21 | (sat_imm)<<16 | (Rd)<<12 | (imm5)<<7 | (sh)<<6 | 0b01<<4 | (Rn))
 // Unsigned Staturate Rn to 2^(staturate_to-1) into Rd. Optionnaly shift left Rn before saturate
 #define USAT_REG_LSL_IMM5(Rd, saturate_to, Rn, shift)   EMIT(SSAT_gen(c__, (saturate_to), Rd, shift, 0, Rn))

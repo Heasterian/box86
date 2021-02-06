@@ -11,6 +11,7 @@
 #include "x86primop.h"
 #include "x86trace.h"
 #include "box86context.h"
+#include "bridge.h"
 #ifdef DYNAREC
 #include "../dynarec/arm_lock_helper.h"
 #endif
@@ -42,7 +43,7 @@ void Run6766(x86emu_t *emu)
     
                 
     default:
-        ip-=2;  //unfetch
+        ip-=3;  //unfetch
         UnimpOpcode(emu);
     }
     R_EIP = ip;
@@ -120,6 +121,14 @@ void Run67(x86emu_t *emu)
             R_DI+=1;
         break;
 
+    case 0xAC:                      /* LODSB */
+        R_AL = *(int8_t*)(R_SI+GetDSBaseEmu(emu));
+        if(ACCESS_FLAG(F_DF))
+            R_SI-=1;
+        else
+            R_SI+=1;
+        break;
+
     case 0xE0:                      /* LOOPNZ */
         CHECK_FLAGS(emu);
         tmp8s = F8S;
@@ -153,6 +162,7 @@ void Run67(x86emu_t *emu)
         break;
 
     default:
+        ip-=2;
         UnimpOpcode(emu);
     }
     R_EIP = ip;
@@ -288,16 +298,32 @@ void RunLock(x86emu_t *emu)
                     nextop = F8;
                     GET_ED;
 #ifdef DYNAREC
-                    do {
-                        tmp32u = arm_lock_read_d(ED);
-                        cmp32(emu, R_EAX, tmp32u);
-                        if(ACCESS_FLAG(F_ZF)) {
-                            tmp32s = arm_lock_write_d(ED, GD.dword[0]);
-                        } else {
-                            R_EAX = tmp32u;
-                            tmp32s = 0;
-                        }
-                    } while(tmp32s);
+                    if(((uintptr_t)ED)&3) {
+                        do {
+                            tmp32u = ED->dword[0] & ~0xff;
+                            tmp32u |= arm_lock_read_b(ED);
+                            cmp32(emu, R_EAX, tmp32u);
+                            if(ACCESS_FLAG(F_ZF)) {
+                                tmp32s = arm_lock_write_b(ED, GD.dword[0] & 0xff);
+                                if(!tmp32s)
+                                    ED->dword[0] = GD.dword[0];
+                            } else {
+                                R_EAX = tmp32u;
+                                tmp32s = 0;
+                            }
+                        } while(tmp32s);
+                    } else {
+                        do {
+                            tmp32u = arm_lock_read_d(ED);
+                            cmp32(emu, R_EAX, tmp32u);
+                            if(ACCESS_FLAG(F_ZF)) {
+                                tmp32s = arm_lock_write_d(ED, GD.dword[0]);
+                            } else {
+                                R_EAX = tmp32u;
+                                tmp32s = 0;
+                            }
+                        } while(tmp32s);
+                    }
 #else
                     pthread_mutex_lock(&emu->context->mutex_lock);
                     cmp32(emu, R_EAX, ED->dword[0]);
@@ -367,6 +393,38 @@ void RunLock(x86emu_t *emu)
                             pthread_mutex_unlock(&emu->context->mutex_lock);
 #endif
                             break;
+                        case 5:             /* BTS Ed, Ib */
+                            CHECK_FLAGS(emu);
+                            GET_ED;
+                            tmp8u = F8;
+                            if((nextop&0xC0)!=0xC0)
+                            {
+                                ED=(reg32_t*)(((uint32_t*)(ED))+(tmp8u>>5));
+                            }
+                            tmp8u&=31;
+#ifdef DYNAREC
+                            do {
+                                tmp32u = arm_lock_read_d(ED);
+                                if(tmp32u & (1<<tmp8u)) {
+                                    SET_FLAG(F_CF);
+                                    tmp32s = 0;
+                                } else {
+                                    CLEAR_FLAG(F_CF);
+                                    tmp32u ^= (1<<tmp8u);
+                                    tmp32s = arm_lock_write_d(ED, tmp32u);
+                                }
+                            } while(tmp32s);
+#else
+                            pthread_mutex_lock(&emu->context->mutex_lock);
+                            if(ED->dword[0] & (1<<tmp8u)) {
+                                SET_FLAG(F_CF);
+                            } else {
+                                CLEAR_FLAG(F_CF);
+                                ED->dword[0] ^= (1<<tmp8u);
+                            }
+                            pthread_mutex_unlock(&emu->context->mutex_lock);
+#endif
+                            break;
                         case 6:             /* BTR Ed, Ib */
                             CHECK_FLAGS(emu);
                             GET_ED;
@@ -400,7 +458,7 @@ void RunLock(x86emu_t *emu)
                             break;
 
                         default:
-                            ip -= 2; //unfetchall 0F BA but not F0, continue normal without LOCK
+                            ip -= 3; //unfetchall 0F BA nextop but not F0, continue normal without LOCK
                             break;
                     }
                     break;
@@ -455,10 +513,19 @@ void RunLock(x86emu_t *emu)
                     nextop = F8;
                     GET_ED;
 #ifdef DYNAREC
-                    do {
-                        tmp32u = arm_lock_read_d(ED);
-                        tmp32u2 = add32(emu, tmp32u, GD.dword[0]);
-                    } while(arm_lock_write_d(ED, tmp32u2));
+                    if(((uintptr_t)ED)&3) {
+                        do {
+                            tmp32u = ED->dword[0] & ~0xff;
+                            tmp32u |= arm_lock_read_b(ED);
+                            tmp32u2 = add32(emu, tmp32u, GD.dword[0]);
+                        } while(arm_lock_write_b(ED, tmp32u2&0xff));
+                        ED->dword[0] = tmp32u2;
+                    } else {
+                        do {
+                            tmp32u = arm_lock_read_d(ED);
+                            tmp32u2 = add32(emu, tmp32u, GD.dword[0]);
+                        } while(arm_lock_write_d(ED, tmp32u2));
+                    }
                     GD.dword[0] = tmp32u;
 #else
                     pthread_mutex_lock(&emu->context->mutex_lock);
@@ -529,9 +596,14 @@ void RunLock(x86emu_t *emu)
                     break;
                 default:
                     // trigger invalid lock?
-                    ip -= 1; // unfetch 0F but not F0
+                    ip -= 2; // unfetch 0F and nextop but not F0
                     break;
             }
+            break;
+
+        case 0x66:
+            RunLock66(emu);
+            ip = R_EIP;
             break;
 
         case 0x81:              /* GRP Ed,Id */
@@ -624,6 +696,96 @@ void RunLock(x86emu_t *emu)
     R_EIP = ip;
 }
 
+void RunLock66(x86emu_t *emu)
+{
+    uintptr_t ip = R_EIP+2;
+    uint8_t opcode = F8;
+    uint8_t nextop;
+    reg32_t *oped;
+    uint16_t tmp16u;
+    int16_t tmp16s;
+    #ifdef DYNAREC
+    uint16_t tmp16u2;
+    int32_t tmp32s;
+    #endif
+    switch(opcode) {
+        case 0x0f:
+            opcode = F8;
+            switch (opcode) { 
+                case 0xB1:                      /* CMPXCHG Ew,Gw */
+                    nextop = F8;
+                    GET_EW;
+#ifdef DYNAREC
+                    do {
+                        tmp16u = arm_lock_read_h(ED);
+                        cmp16(emu, R_AX, tmp16u);
+                        if(ACCESS_FLAG(F_ZF)) {
+                            tmp32s = arm_lock_write_h(ED, GW.word[0]);
+                        } else {
+                            R_AX = tmp16u;
+                            tmp32s = 0;
+                        }
+                    } while(tmp32s);
+#else
+                    pthread_mutex_lock(&emu->context->mutex_lock);
+                    GET_EW;
+                    cmp16(emu, R_AX, EW->word[0]);
+                    if(ACCESS_FLAG(F_ZF)) {
+                        EW->word[0] = GW.word[0];
+                    } else {
+                        R_AX = EW->word[0];
+                    }
+                    pthread_mutex_unlock(&emu->context->mutex_lock);
+#endif
+                    break;
+            default:
+                ip-=4;    // unfetch nextop, 0F, F0 & 66
+                UnimpOpcode(emu);
+            }
+            break;
+        case 0x81:              /* GRP Ed,Iw */
+        case 0x83:              /* GRP Ed,Ib */
+            nextop = F8;
+            GET_EW;
+            if(opcode==0x83) {
+                tmp16s = F8S;
+                tmp16u = (uint32_t)tmp16s;
+            } else
+                tmp16u = F16;
+#ifdef DYNAREC
+            switch((nextop>>3)&7) {
+                case 0: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, add16(emu, tmp16u2, tmp16u))); break;
+                case 1: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW,  or16(emu, tmp16u2, tmp16u))); break;
+                case 2: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, adc16(emu, tmp16u2, tmp16u))); break;
+                case 3: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, sbb16(emu, tmp16u2, tmp16u))); break;
+                case 4: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, and16(emu, tmp16u2, tmp16u))); break;
+                case 5: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, sub16(emu, tmp16u2, tmp16u))); break;
+                case 6: do { tmp16u2 = arm_lock_read_h(EW);} while(arm_lock_write_h(EW, xor16(emu, tmp16u2, tmp16u))); break;
+                case 7:                cmp16(emu, ED->dword[0], tmp16u); break;
+            }
+#else
+            pthread_mutex_lock(&emu->context->mutex_lock);
+            switch((nextop>>3)&7) {
+                case 0: EW->word[0] = add16(emu, EW->word[0], tmp16u); break;
+                case 1: EW->word[0] =  or16(emu, EW->word[0], tmp16u); break;
+                case 2: EW->word[0] = adc16(emu, EW->word[0], tmp16u); break;
+                case 3: EW->word[0] = sbb16(emu, EW->word[0], tmp16u); break;
+                case 4: EW->word[0] = and16(emu, EW->word[0], tmp16u); break;
+                case 5: EW->word[0] = sub16(emu, EW->word[0], tmp16u); break;
+                case 6: EW->word[0] = xor16(emu, EW->word[0], tmp16u); break;
+                case 7:               cmp16(emu, EW->word[0], tmp16u); break;
+            }
+            pthread_mutex_unlock(&emu->context->mutex_lock);
+#endif
+            break;
+        default:
+            ip-=3;    // unfetch nextop, F0  & 66
+            UnimpOpcode(emu);
+            // should trigger invalid unlock ?
+    }
+    R_EIP = ip;
+}
+
 void RunGS(x86emu_t *emu)
 {
     uintptr_t ip = R_EIP+1;
@@ -645,6 +807,14 @@ void RunGS(x86emu_t *emu)
             nextop = F8;
             GET_ED_OFFS(tlsdata);
             GD.dword[0] = add32(emu, GD.dword[0], ED->dword[0]);
+            break;
+
+        case 0x06:              /* PUSH ES */
+            Push(emu, emu->segs[_ES]);
+            break;
+        case 0x07:             /* POP ES */
+            emu->segs[_ES] = Pop(emu);
+            emu->segs_serial[_ES] = 0;
             break;
 
         case 0x11:              /* ADC GS:Ed, Gd */
@@ -803,7 +973,7 @@ void RunGS(x86emu_t *emu)
                     ED->dword[0] = dec32(emu, ED->dword[0]);
                     break;
                 case 2:                 /* CALL NEAR Ed */
-                    R_EIP = ED->dword[0];
+                    R_EIP = (uintptr_t)getAlternate((void*)ED->dword[0]);
                     Push(emu, ip);
                     ip = R_EIP;
                     break;
@@ -820,7 +990,7 @@ void RunGS(x86emu_t *emu)
                     }
                     break;
                 case 4:                 /* JMP NEAR Ed */
-                    ip = ED->dword[0];
+                    ip = (uintptr_t)getAlternate((void*)ED->dword[0]);
                     break;
                 case 5:                 /* JMP FAR Ed */
                     if(nextop>0xc0) {
@@ -842,7 +1012,7 @@ void RunGS(x86emu_t *emu)
             }
             break;
         default:
-            ip--;
+            ip=R_EIP;
             UnimpOpcode(emu);
     }
     R_EIP = ip;
@@ -913,9 +1083,19 @@ void RunFS(x86emu_t *emu)
             --ip;   // so ignore prefix and continue
             break;
 
+        case 0x66:
+            RunFS66(emu, tlsdata);  // two GetFSBaseEmu() call, but it's cheap now
+            ip = R_EIP;
+            break;
         case 0x67:
             opcode = F8;
             switch(opcode) {
+                case 0x3B:                              /* CMP GD, FS:Ed16 */
+                    nextop = F8;
+                    GET_EW16_OFFS(tlsdata);
+                    cmp32(emu, GD.dword[0], ED->dword[0]);
+                    break;
+
                 case 0x89:                              /* MOV ED16,Gd */
                     nextop = F8;
                     GET_EW16_OFFS(tlsdata);
@@ -950,12 +1130,12 @@ void RunFS(x86emu_t *emu)
                             Push(emu, ED->dword[0]);
                             break;
                         default:
-                            ip-=2;
+                            ip-=3;
                             UnimpOpcode(emu);
                     }
                     break;
                 default:
-                    ip-=2;
+                    ip-=3;
                     UnimpOpcode(emu);
             }
             break;
@@ -1022,12 +1202,22 @@ void RunFS(x86emu_t *emu)
             nextop = F8;
             GET_ED_OFFS(tlsdata);
             emu->segs[((nextop&0x38)>>3)] = ED->word[0];
-            emu->segs_clean[((nextop&0x38)>>3)] = 0;
+            emu->segs_serial[((nextop&0x38)>>3)] = 0;
             break;
         case 0x8F:              /* POP Ed */
             nextop = F8;
             GET_ED_OFFS(tlsdata);
             ED->dword[0] = Pop(emu);
+            break;
+
+        case 0x9C:              /* PUSHFD */
+            // Segment override if for memory loc, no stack segment 
+            --ip;   // so ignore prefix and continue
+            break;
+
+        case 0xA0:              /* MOV AL,Ob */
+            tmp32s = F32S;
+            R_AL = *(uint8_t*)((tlsdata) + tmp32s);
             break;
         case 0xA1:              /* MOV EAX,Ov */
             tmp32s = F32S;
@@ -1085,7 +1275,7 @@ void RunFS(x86emu_t *emu)
                     ED->dword[0] = dec32(emu, ED->dword[0]);
                     break;
                 case 2:                 /* CALL NEAR Ed */
-                    R_EIP = ED->dword[0];
+                    R_EIP = (uintptr_t)getAlternate((void*)ED->dword[0]);
                     Push(emu, ip);
                     ip = R_EIP;
                     break;
@@ -1102,11 +1292,12 @@ void RunFS(x86emu_t *emu)
                     }
                     break;
                 case 4:                 /* JMP NEAR Ed */
-                    ip = ED->dword[0];
+                    ip = (uintptr_t)getAlternate((void*)ED->dword[0]);
                     break;
                 case 5:                 /* JMP FAR Ed */
                     if(nextop>0xc0) {
                         printf_log(LOG_NONE, "Illegal Opcode 0x%02X 0x%02X\n", opcode, nextop);
+                        ip-=3;
                         emu->quit=1;
                         emu->error |= ERR_ILLEGAL;
                     } else {
@@ -1125,7 +1316,32 @@ void RunFS(x86emu_t *emu)
             }
             break;
         default:
-            ip--;
+            ip = R_EIP;
+            UnimpOpcode(emu);
+    }
+    R_EIP = ip;
+}
+
+void RunFS66(x86emu_t *emu, uintptr_t tlsdata)
+{
+    uintptr_t ip = R_EIP+2;
+    uint8_t opcode = F8;
+    uint8_t nextop;
+    reg32_t *oped;
+    switch(opcode) {
+        case 0x03:                              /* ADD Gw, FS:Ew */
+            nextop = F8;
+            GET_EW_OFFS(tlsdata);
+            GW.word[0] = add16(emu, GW.word[0], EW->word[0]);
+            break;
+
+        case 0x8B:                              /* MOV Gw,FS:Ew */
+            nextop = F8;
+            GET_EW_OFFS(tlsdata);
+            GW.word[0] = EW->word[0];
+            break;
+        default:
+            ip=R_EIP;
             UnimpOpcode(emu);
     }
     R_EIP = ip;

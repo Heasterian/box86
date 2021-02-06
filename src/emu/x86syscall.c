@@ -56,6 +56,9 @@ typedef struct x86_sigaction_s x86_sigaction_t;
 int32_t my_getrandom(x86emu_t* emu, void* buf, uint32_t buflen, uint32_t flags);
 int of_convert(int flag);
 int32_t my_open(x86emu_t* emu, void* pathname, int32_t flags, uint32_t mode);
+#ifndef __NR_memfd_create
+int my_memfd_create(x86emu_t* emu, void* name, uint32_t flags);
+#endif
 
 #ifndef NOALIGN
 int my_epoll_create(x86emu_t* emu, int size);
@@ -65,6 +68,10 @@ int32_t my_epoll_wait(x86emu_t* emu, int32_t epfd, void* events, int32_t maxeven
 #endif
 int my_sigaction(x86emu_t* emu, int signum, const x86_sigaction_t *act, x86_sigaction_t *oldact);
 int32_t my_execve(x86emu_t* emu, const char* path, char* const argv[], char* const envp[]);
+void* my_mmap(x86emu_t* emu, void *addr, unsigned long length, int prot, int flags, int fd, int offset);
+void* my_mmap64(x86emu_t* emu, void *addr, unsigned long length, int prot, int flags, int fd, int64_t offset);
+int my_munmap(x86emu_t* emu, void* addr, unsigned long length);
+int my_mprotect(x86emu_t* emu, void *addr, unsigned long len, int prot);
 
 // cannot include <fcntl.h>, it conflict with some asm includes...
 #ifndef O_NONBLOCK
@@ -126,7 +133,7 @@ scwrap_t syscallwrap[] = {
     { 82, __NR_select, 5 },
 #endif
     { 85, __NR_readlink, 3 },
-    { 91, __NR_munmap, 2 },
+    //{ 91, __NR_munmap, 2 },
     { 94, __NR_fchmod, 2 },
     { 99, __NR_statfs, 2 },
 #ifdef __NR_socketcall
@@ -163,7 +170,7 @@ scwrap_t syscallwrap[] = {
     //{ 120, __NR_clone, 5 },    // need works
     //{ 122, __NR_uname, 1 },
     //{ 123, __NR_modify_ldt },
-    { 125, __NR_mprotect, 3 },
+    //{ 125, __NR_mprotect, 3 },
     { 136, __NR_personality, 1 },
     { 140, __NR__llseek, 5 },
     { 141, __NR_getdents, 3 },
@@ -187,15 +194,24 @@ scwrap_t syscallwrap[] = {
     { 183, __NR_getcwd, 2 },
     { 186, __NR_sigaltstack, 2 },    // neeed wrap or something?
     { 191, __NR_ugetrlimit, 2 },
-    { 192, __NR_mmap2, 6},
+//    { 192, __NR_mmap2, 6},
     //{ 195, __NR_stat64, 2 },  // need proprer wrap because of structure size change
     //{ 196, __NR_lstat64, 2 }, // need proprer wrap because of structure size change
     //{ 197, __NR_fstat64, 2 },  // need proprer wrap because of structure size change
+#ifndef POWERPCLE
     { 199, __NR_getuid32, 0 },
     { 200, __NR_getgid32, 0 },
     { 201, __NR_geteuid32, 0 },
     { 202, __NR_getegid32, 0 },
     { 208, __NR_setresuid32, 3 },
+#else
+    // PowerPC uses the same syscalls for 32/64 bit processes.
+    { 199, __NR_getuid, 0 },
+    { 200, __NR_getgid, 0 },
+    { 201, __NR_geteuid, 0 },
+    { 202, __NR_getegid, 0 },
+    { 208, __NR_setresuid, 3 },
+#endif
     { 220, __NR_getdents64, 3 },
     //{ 221, __NR_fcntl64, 3 },
     { 224, __NR_gettid, 0 },
@@ -214,11 +230,15 @@ scwrap_t syscallwrap[] = {
     { 271, __NR_utimes, 2 },
     { 311, __NR_set_robust_list, 2 },
     { 312, __NR_get_robust_list, 4 },
+    { 318, __NR_getcpu, 3},
 #ifdef NOALIGN
     { 329, __NR_epoll_create1, 1 },
 #endif
 #ifdef __NR_getrandom
     { 355, __NR_getrandom, 3 },
+#endif
+#ifdef __NR_memfd_create
+    { 356, __NR_memfd_create, 2},
 #endif
 };
 
@@ -325,7 +345,8 @@ void EXPORT x86Syscall(x86emu_t *emu)
         case 1: // sys_exit
             emu->quit = 1;
             emu->exit = 1;
-            R_EAX = R_EBX; // faking the syscall here, we don't want to really terminate the program now
+            //R_EAX = syscall(__NR_exit, R_EBX);  // the syscall should exit only current thread
+            R_EAX = R_EBX; // faking the syscall here, we don't want to really terminate the thread now
             break;
         case 3:  // sys_read
             R_EAX = (uint32_t)read((int)R_EBX, (void*)R_ECX, (size_t)R_EDX);
@@ -389,8 +410,11 @@ void EXPORT x86Syscall(x86emu_t *emu)
         case 90:    // old_mmap
             {
                 struct mmap_arg_struct *st = (struct mmap_arg_struct*)R_EBX;
-                R_EAX = (uintptr_t)mmap((void*)st->addr, st->len, st->prot, st->flags, st->fd, st->offset);
+                R_EAX = (uintptr_t)my_mmap(emu, (void*)st->addr, st->len, st->prot, st->flags, st->fd, st->offset);
             }
+            break;
+        case 91:   // munmap
+            R_EAX = my_munmap(emu, (void*)R_EBX, (unsigned long)R_ECX);
             break;
 #ifndef __NR_socketcall
         case 102: {
@@ -503,6 +527,9 @@ void EXPORT x86Syscall(x86emu_t *emu)
         case 123:   // SYS_modify_ldt
             R_EAX = my_modify_ldt(emu, R_EBX, (thread_area_t*)R_ECX, R_EDX);
             break;
+        case 125:   // mprotect
+            R_EAX = my_mprotect(emu, (void*)R_EBX, (unsigned long)R_ECX, R_EDX);
+            break;
         case 168: // sys_poll
             R_EAX = (uint32_t)poll((void*)R_EBX, R_ECX, (int)R_EDX);
             break;
@@ -518,6 +545,9 @@ void EXPORT x86Syscall(x86emu_t *emu)
                 int r = vfork();
                 R_EAX = r;
             }
+            break;
+        case 192:   // mmap2
+            R_EAX = (uint32_t)my_mmap64(emu, (void*)R_EBX, (unsigned long)R_ECX, R_EDX, R_ESI, R_EDI, R_EBP);
             break;
         case 195:   // stat64
             {   
@@ -580,6 +610,11 @@ void EXPORT x86Syscall(x86emu_t *emu)
             R_EAX = my_getrandom(emu, (void*)R_EBX, R_ECX, R_EDX);
             break;
 #endif
+#ifndef __NR_memfd_create
+        case 356:  // memfd_create
+            R_EAX = my_memfd_create(emu, (void*)R_EBX, R_ECX);
+            break;
+#endif
         default:
             printf_log(LOG_INFO, "Error: Unsupported Syscall 0x%02Xh (%d)\n", s, s);
             emu->quit = 1;
@@ -632,10 +667,16 @@ uint32_t EXPORT my_syscall(x86emu_t *emu)
             return (uint32_t)close(i32(4));
         case 11: // execve
             return (uint32_t)my_execve(emu, p(4), p(8), p(12));
+        case 91:   // munmap
+            return (uint32_t)my_munmap(emu, p(4), u32(8));
         case 123:   // SYS_modify_ldt
             return my_modify_ldt(emu, i32(4), (thread_area_t*)p(8), i32(12));
+        case 125:   // mprotect
+            return (uint32_t)my_mprotect(emu, p(4), u32(8), i32(12));
         case 174:   // sys_rt_sigaction
             return (uint32_t)my_sigaction(emu, i32(4), (x86_sigaction_t*)p(8), (x86_sigaction_t*)p(12));
+        case 192:   // mmap2
+            return (uint32_t)my_mmap64(emu, p(4), u32(8), i32(12), i32(16), i32(20), u32(24));
         case 243: // set_thread_area
             return my_set_thread_area((thread_area_t*)p(4));
 #ifndef NOALIGN
@@ -663,6 +704,10 @@ uint32_t EXPORT my_syscall(x86emu_t *emu)
 #ifndef __NR_getrandom
         case 355:  // getrandom
             return (uint32_t)my_getrandom(emu, p(4), u32(8), u32(12));
+#endif
+#ifndef __NR_memfd_create
+        case 356:  // memfd_create
+            return (uint32_t)my_memfd_create(emu, (void*)R_EBX, R_ECX);
 #endif
         default:
             printf_log(LOG_INFO, "Error: Unsupported libc Syscall 0x%02X (%d)\n", s, s);

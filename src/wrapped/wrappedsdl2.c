@@ -17,6 +17,7 @@
 #include "box86context.h"
 #include "sdl2rwops.h"
 #include "myalign.h"
+#include "threads.h"
 
 static int sdl_Yes() { return 1;}
 static int sdl_No() { return 0;}
@@ -71,6 +72,7 @@ typedef struct
 
 
 // TODO: put the wrapper type in a dedicate include
+typedef void  (*vFv_t)();
 typedef void* (*pFv_t)();
 typedef int32_t (*iFp_t)(void*);
 typedef int32_t (*iFip_t)(int32_t, void*);
@@ -108,6 +110,7 @@ typedef SDL_JoystickGUID (*SFp_t)(void*);
 typedef SDL_GameControllerButtonBind (*SFpi_t)(void*, int32_t);
 
 #define SUPER() \
+    GO(SDL_Quit, vFv_t)                             \
     GO(SDL_OpenAudio, iFpp_t)                       \
     GO(SDL_OpenAudioDevice, iFpippi_t)              \
     GO(SDL_LoadFile_RW, pFpi_t)                     \
@@ -139,7 +142,9 @@ typedef SDL_GameControllerButtonBind (*SFpi_t)(void*, int32_t);
     GO(SDL_RemoveTimer, uFu_t)                      \
     GO(SDL_CreateThread, pFppp_t)                   \
     GO(SDL_KillThread, vFp_t)                       \
+    GO(SDL_GetEventFilter, iFpp_t)                  \
     GO(SDL_SetEventFilter, vFpp_t)                  \
+    GO(SDL_LogGetOutputFunction, vFpp_t)            \
     GO(SDL_LogSetOutputFunction, vFpp_t)            \
     GO(SDL_LogMessageV, vFiupp_t)                   \
     GO(SDL_GL_GetProcAddress, pFp_t)                \
@@ -168,16 +173,6 @@ typedef struct sdl2_my_s {
     #define GO(A, B)    B   A;
     SUPER()
     #undef GO
-    // timer map
-    kh_timercb_t    *timercb;
-    uint32_t        settimer;
-    // threads
-    kh_timercb_t    *threads;
-    // evt filter
-    x86emu_t        *sdl2_evtfilter;
-    void*           sdl2_evtfnc;
-    // log output
-    x86emu_t        *sdl2_logouput;
 } sdl2_my_t;
 
 void* getSDL2My(library_t* lib)
@@ -186,27 +181,12 @@ void* getSDL2My(library_t* lib)
     #define GO(A, W) my->A = (W)dlsym(lib->priv.w.lib, #A);
     SUPER()
     #undef GO
-    my->timercb = kh_init(timercb);
-    my->threads = kh_init(timercb);
     return my;
 }
 
 void freeSDL2My(void* lib)
 {
-    sdl2_my_t *my = (sdl2_my_t *)lib;
-    //x86emu_t *x;
-    /*kh_foreach_value(my->timercb, x, 
-        FreeCallback(x);
-    );*/
-    kh_destroy(timercb, my->timercb);
-
-    /*kh_foreach_value(my->threads, x, 
-        FreeCallback(x);
-    );*/
-    kh_destroy(timercb, my->threads);
-    /*if(my->sdl2_evtfilter) {
-        FreeCallback(my->sdl2_evtfilter);
-    }*/
+    /*sdl2_my_t *my = (sdl2_my_t *)lib;*/
 }
 #undef SUPER
 
@@ -217,6 +197,54 @@ GO(2)   \
 GO(3)   \
 GO(4)
 
+// Timer
+#define GO(A)   \
+static uintptr_t my_Timer_fct_##A = 0;                                      \
+static uint32_t my_Timer_##A(uint32_t a, void* b)                           \
+{                                                                           \
+    return (uint32_t)RunFunction(my_context, my_Timer_fct_##A, 2, a, b);    \
+}
+SUPER()
+#undef GO
+static void* find_Timer_Fct(void* fct)
+{
+    if(!fct) return NULL;
+    void* p;
+    if((p = GetNativeFnc((uintptr_t)fct))) return p;
+    #define GO(A) if(my_Timer_fct_##A == (uintptr_t)fct) return my_Timer_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_Timer_fct_##A == 0) {my_Timer_fct_##A = (uintptr_t)fct; return my_Timer_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for SDL2 Timer callback\n");
+    return NULL;
+    
+}
+// AudioCallback
+#define GO(A)   \
+static uintptr_t my_AudioCallback_fct_##A = 0;                      \
+static void my_AudioCallback_##A(void* a, void* b, int c)           \
+{                                                                   \
+    RunFunction(my_context, my_AudioCallback_fct_##A, 3, a, b, c);  \
+}
+SUPER()
+#undef GO
+static void* find_AudioCallback_Fct(void* fct)
+{
+    if(!fct) return NULL;
+    void* p;
+    if((p = GetNativeFnc((uintptr_t)fct))) return p;
+    #define GO(A) if(my_AudioCallback_fct_##A == (uintptr_t)fct) return my_AudioCallback_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_AudioCallback_fct_##A == 0) {my_AudioCallback_fct_##A = (uintptr_t)fct; return my_AudioCallback_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for SDL2 AudioCallback callback\n");
+    return NULL;
+    
+}
 // eventfilter
 #define GO(A)   \
 static uintptr_t my_eventfilter_fct_##A = 0;                                \
@@ -239,42 +267,53 @@ static void* find_eventfilter_Fct(void* fct)
     #undef GO
     printf_log(LOG_NONE, "Warning, no more slot for SDL2 eventfilter callback\n");
     return NULL;
+    
+}
+static void* reverse_eventfilter_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(CheckBridged(my_context->sdl2lib->priv.w.bridge, fct))
+        return (void*)CheckBridged(my_context->sdl2lib->priv.w.bridge, fct);
+    #define GO(A) if(my_eventfilter_##A == fct) return (void*)my_eventfilter_fct_##A;
+    SUPER()
+    #undef GO
+    return (void*)AddBridge(my_context->sdl2lib->priv.w.bridge, iFpp, fct, 0);
+}
+
+// LogOutput
+#define GO(A)   \
+static uintptr_t my_LogOutput_fct_##A = 0;                                  \
+static void my_LogOutput_##A(void* a, int b, int c, void* d)                \
+{                                                                           \
+    RunFunction(my_context, my_LogOutput_fct_##A, 4, a, b, c, d);  \
+}
+SUPER()
+#undef GO
+static void* find_LogOutput_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_LogOutput_fct_##A == (uintptr_t)fct) return my_LogOutput_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_LogOutput_fct_##A == 0) {my_LogOutput_fct_##A = (uintptr_t)fct; return my_LogOutput_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for SDL2 LogOutput callback\n");
+    return NULL;
+}
+static void* reverse_LogOutput_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(CheckBridged(my_context->sdl2lib->priv.w.bridge, fct))
+        return (void*)CheckBridged(my_context->sdl2lib->priv.w.bridge, fct);
+    #define GO(A) if(my_LogOutput_##A == fct) return (void*)my_LogOutput_fct_##A;
+    SUPER()
+    #undef GO
+    return (void*)AddBridge(my_context->sdl2lib->priv.w.bridge, vFpiip, fct, 0);
 }
 
 #undef SUPER
-
-static void sdl2Callback(void *userdata, uint8_t *stream, int32_t len)
-{
-    x86emu_t *emu = (x86emu_t*) userdata;
-    SetCallbackArg(emu, 1, stream);
-    SetCallbackArg(emu, 2, (void*)len);
-    RunCallback(emu);
-}
-
-static uint32_t sdl2TimerCallback(uint32_t interval, void *userdata)
-{
-    x86emu_t *emu = (x86emu_t*) userdata;
-    SetCallbackArg(emu, 0, (void*)interval);
-    uint32_t ret = RunCallback(emu);
-    return ret;
-}
-
-static int32_t sdl2ThreadCallback(void *userdata)
-{
-    x86emu_t *emu = (x86emu_t*) userdata;
-    int32_t ret = (int32_t)RunCallback(emu);
-    FreeCallback(emu);
-    return ret;
-}
-
-static void sdl2LogOutputCallback(void *userdata, int32_t category, uint32_t priority, const char* message)
-{
-    x86emu_t *emu = (x86emu_t*) userdata;
-    SetCallbackArg(emu, 1, (void*)category);
-    SetCallbackArg(emu, 2, (void*)priority);
-    SetCallbackArg(emu, 3, (void*)message);
-    RunCallback(emu);
-}
 
 // TODO: track the memory for those callback
 EXPORT int32_t my2_SDL_OpenAudio(x86emu_t* emu, void* d, void* o)
@@ -284,23 +323,15 @@ EXPORT int32_t my2_SDL_OpenAudio(x86emu_t* emu, void* d, void* o)
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
     // create a callback
     void *fnc = (void*)desired->callback;
-    void *olduser = desired->userdata;
-    x86emu_t *cbemu = (fnc)?AddCallback(emu, (uintptr_t)fnc, 3, olduser, NULL, NULL, NULL):NULL;
-    if(fnc) {
-        desired->callback = sdl2Callback;
-        desired->userdata = cbemu;
-    }
+    desired->callback = find_AudioCallback_Fct(fnc);
     int ret = my->SDL_OpenAudio(desired, (SDL2_AudioSpec*)o);
     if (ret!=0) {
         // error, clean the callback...
         desired->callback = fnc;
-        desired->userdata = olduser;
-        FreeCallback(cbemu);
         return ret;
     }
     // put back stuff in place?
     desired->callback = fnc;
-    desired->userdata = olduser;
 
     return ret;
 }
@@ -312,23 +343,15 @@ EXPORT int32_t my2_SDL_OpenAudioDevice(x86emu_t* emu, void* device, int32_t isca
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
     // create a callback
     void *fnc = (void*)desired->callback;
-    void *olduser = desired->userdata;
-    x86emu_t *cbemu = (fnc)?AddCallback(emu, (uintptr_t)fnc, 3, olduser, NULL, NULL, NULL):NULL;
-    if(fnc) {
-        desired->callback = sdl2Callback;
-        desired->userdata = cbemu;
-    }
+    desired->callback = find_AudioCallback_Fct(fnc);
     int ret = my->SDL_OpenAudioDevice(device, iscapture, desired, (SDL2_AudioSpec*)o, allowed);
     if (ret<=0) {
         // error, clean the callback...
         desired->callback = fnc;
-        desired->userdata = olduser;
-        FreeCallback(cbemu);
         return ret;
     }
     // put back stuff in place?
     desired->callback = fnc;
-    desired->userdata = olduser;
 
     return ret;
 }
@@ -573,27 +596,16 @@ EXPORT int my2_SDL_SaveDollarTemplate(x86emu_t* emu, int gesture, void* a)
     return ret;
 }
 
-EXPORT uint32_t my2_SDL_AddTimer(x86emu_t* emu, uint32_t a, void* cb, void* p)
+EXPORT uint32_t my2_SDL_AddTimer(x86emu_t* emu, uint32_t a, void* f, void* p)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
-    x86emu_t *cbemu = AddCallback(emu, (uintptr_t)cb, 2, NULL, p, NULL, NULL);
-    uint32_t t = my->SDL_AddTimer(a, sdl2TimerCallback, cbemu);
-    int ret;
-    khint_t k = kh_put(timercb, my->timercb, t, &ret);
-    kh_value(my->timercb, k) = cbemu;
-    return t;
+    return my->SDL_AddTimer(a, find_Timer_Fct(f), p);
 }
 
 EXPORT void my2_SDL_RemoveTimer(x86emu_t* emu, uint32_t t)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
     my->SDL_RemoveTimer(t);
-    khint_t k = kh_get(timercb,my->timercb, t);
-    if(k!=kh_end(my->timercb))
-    {
-        FreeCallback(kh_value(my->timercb, k));
-        kh_del(timercb, my->timercb, k);
-    }
 }
 
 EXPORT void my2_SDL_SetEventFilter(x86emu_t* emu, void* p, void* userdata)
@@ -601,33 +613,36 @@ EXPORT void my2_SDL_SetEventFilter(x86emu_t* emu, void* p, void* userdata)
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
     my->SDL_SetEventFilter(find_eventfilter_Fct(p), userdata);
 }
-EXPORT void *my2_SDL_GetEventFilter(x86emu_t* emu)
+EXPORT int my2_SDL_GetEventFilter(x86emu_t* emu, void** f, void* userdata)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
-    return my->sdl2_evtfnc;
+    int ret = my->SDL_GetEventFilter(f, userdata);
+    if(*f) reverse_eventfilter_Fct(*f);
+    return ret;
 }
 
-EXPORT void my2_SDL_LogSetOutputFunction(x86emu_t* emu, void* cb, void* arg)
+EXPORT void my2_SDL_LogGetOutputFunction(x86emu_t* emu, void** f, void* arg)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
-    if(my->sdl2_logouput) {
-        my->SDL_LogSetOutputFunction(NULL, NULL);   // remove old one
-        FreeCallback(my->sdl2_logouput);
-        my->sdl2_logouput = NULL;
-        my->sdl2_evtfnc = NULL;
-    }
-    if(cb) {
-        my->sdl2_logouput = AddCallback(emu, (uintptr_t)cb, 4, arg, NULL, NULL, NULL);
-        my->SDL_LogSetOutputFunction(sdl2LogOutputCallback, my->sdl2_logouput);
-    }
+
+    my->SDL_LogGetOutputFunction(f, arg);
+    if(*f) *f = reverse_LogOutput_Fct(*f);
+}
+EXPORT void my2_SDL_LogSetOutputFunction(x86emu_t* emu, void* f, void* arg)
+{
+    sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
+
+    my->SDL_LogSetOutputFunction(find_LogOutput_Fct(f), arg);
 }
 
-EXPORT int my2_SDL_vsnprintf(x86emu_t* emu, void* buff, uint32_t s, void * fmt, void * b, va_list V) {
+EXPORT int my2_SDL_vsnprintf(x86emu_t* emu, void* buff, uint32_t s, void * fmt, void * b, va_list V)
+{
     #ifndef NOALIGN
     // need to align on arm
     myStackAlign((const char*)fmt, *(uint32_t**)b, emu->scratch);
+    PREPARE_VALIST;
     void* f = vsnprintf;
-    int r = ((iFpupp_t)f)(buff, s, fmt, emu->scratch);
+    int r = ((iFpupp_t)f)(buff, s, fmt, VARARGS);
     return r;
     #else
     void* f = vsnprintf;
@@ -636,36 +651,21 @@ EXPORT int my2_SDL_vsnprintf(x86emu_t* emu, void* buff, uint32_t s, void * fmt, 
     #endif
 }
 
-
-void EXPORT *my2_SDL_CreateThread(x86emu_t* emu, void* cb, void* n, void* p)
+EXPORT void* my2_SDL_CreateThread(x86emu_t* emu, void* f, void* n, void* p)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
-    x86emu_t *cbemu = AddCallback(emu, (uintptr_t)cb, 1, p, NULL, NULL, NULL);
-    void* t = my->SDL_CreateThread(sdl2ThreadCallback, n, cbemu);
-    int ret;
-    khint_t k = kh_put(timercb, my->threads, (uintptr_t)t, &ret);
-    kh_value(my->threads, k) = cbemu;
-    return t;
+
+    void* et = NULL;
+    return my->SDL_CreateThread(my_prepare_thread(emu, f, p, 0, &et), n, et);
 }
 
-void EXPORT my2_SDL_KillThread(x86emu_t* emu, void* p)
-{
-    sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
-    my->SDL_KillThread(p);
-    khint_t k = kh_get(timercb,my->threads, (uintptr_t)p);
-    if(k!=kh_end(my->threads))
-    {
-        FreeCallback(kh_value(my->threads, k));
-        kh_del(timercb, my->threads, k);
-    }
-}
-
-int EXPORT my2_SDL_snprintf(x86emu_t* emu, void* buff, uint32_t s, void * fmt, void * b, va_list V) {
+EXPORT int my2_SDL_snprintf(x86emu_t* emu, void* buff, uint32_t s, void * fmt, void * b, va_list V) {
     #ifndef NOALIGN
     // need to align on arm
     myStackAlign((const char*)fmt, b, emu->scratch);
+    PREPARE_VALIST;
     void* f = vsnprintf;
-    return ((iFpupp_t)f)(buff, s, fmt, emu->scratch);
+    return ((iFpupp_t)f)(buff, s, fmt, VARARGS);
     #else
     return vsnprintf((char*)buff, s, (char*)fmt, V);
     #endif
@@ -684,7 +684,8 @@ EXPORT void my2_SDL_LogCritical(x86emu_t* emu, int32_t cat, void* fmt, void *b) 
     // SDL_LOG_PRIORITY_CRITICAL == 6
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 6, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 6, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 6, fmt, b);
     #endif
@@ -695,7 +696,8 @@ EXPORT void my2_SDL_LogError(x86emu_t* emu, int32_t cat, void* fmt, void *b) {
     // SDL_LOG_PRIORITY_ERROR == 5
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 5, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 5, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 5, fmt, b);
     #endif
@@ -706,7 +708,8 @@ EXPORT void my2_SDL_LogWarn(x86emu_t* emu, int32_t cat, void* fmt, void *b) {
     // SDL_LOG_PRIORITY_WARN == 4
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 4, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 4, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 4, fmt, b);
     #endif
@@ -717,7 +720,8 @@ EXPORT void my2_SDL_LogInfo(x86emu_t* emu, int32_t cat, void* fmt, void *b) {
     // SDL_LOG_PRIORITY_INFO == 3
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 3, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 3, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 3, fmt, b);
     #endif
@@ -728,7 +732,8 @@ EXPORT void my2_SDL_LogDebug(x86emu_t* emu, int32_t cat, void* fmt, void *b) {
     // SDL_LOG_PRIORITY_DEBUG == 2
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 2, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 2, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 2, fmt, b);
     #endif
@@ -739,7 +744,8 @@ EXPORT void my2_SDL_LogVerbose(x86emu_t* emu, int32_t cat, void* fmt, void *b) {
     // SDL_LOG_PRIORITY_VERBOSE == 1
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(cat, 1, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(cat, 1, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(cat, 1, fmt, b);
     #endif
@@ -751,7 +757,8 @@ EXPORT void my2_SDL_Log(x86emu_t* emu, void* fmt, void *b) {
     // SDL_LOG_CATEGORY_APPLICATION == 0
     #ifndef NOALIGN
     myStackAlign((const char*)fmt, b, emu->scratch);
-    my->SDL_LogMessageV(0, 3, fmt, emu->scratch);
+    PREPARE_VALIST;
+    my->SDL_LogMessageV(0, 3, fmt, VARARGS);
     #else
     my->SDL_LogMessageV(0, 3, fmt, b);
     #endif
@@ -811,12 +818,11 @@ EXPORT void* my2_SDL_GL_GetProcAddress(x86emu_t* emu, void* name)
 
 #define nb_once	16
 typedef void(*sdl2_tls_dtor)(void*);
-static x86emu_t *dtor_emu[nb_once] = {0};
+static uintptr_t dtor_emu[nb_once] = {0};
 static void tls_dtor_callback(int n, void* a)
 {
 	if(dtor_emu[n]) {
-		SetCallbackArg(dtor_emu[n], 0, a);
-		RunCallback(dtor_emu[n]);
+        RunFunction(my_context, dtor_emu[n], 1, a);
 	}
 }
 #define GO(N) \
@@ -856,9 +862,8 @@ EXPORT int32_t my2_SDL_TLSSet(x86emu_t* emu, uint32_t id, void* value, void* dto
 		return my->SDL_TLSSet(id, value, NULL);
 	int n = 0;
 	while (n<nb_once) {
-		if(!dtor_emu[n] || GetCallbackAddress(dtor_emu[n])==((uintptr_t)dtor)) {
-			if(!dtor_emu[n]) 
-				dtor_emu[n] = AddCallback(emu, (uintptr_t)dtor, 1, NULL, NULL, NULL, NULL);
+		if(!dtor_emu[n] || (dtor_emu[n])==((uintptr_t)dtor)) {
+			dtor_emu[n] = (uintptr_t)dtor;
 			return my->SDL_TLSSet(id, value, dtor_cb[n]);
 		}
 		++n;
@@ -1020,7 +1025,7 @@ EXPORT int32_t my2_SDL_IsJoystickHIDAPI(x86emu_t* emu, void *p)
     return 0;
 }
 
-void* my_vkGetDeviceProcAddr(x86emu_t* emu, void* device, void* name);
+void* my_vkGetInstanceProcAddr(x86emu_t* emu, void* device, void* name);
 EXPORT void* my2_SDL_Vulkan_GetVkGetInstanceProcAddr(x86emu_t* emu)
 {
     sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
@@ -1029,7 +1034,7 @@ EXPORT void* my2_SDL_Vulkan_GetVkGetInstanceProcAddr(x86emu_t* emu)
         emu->context->vkprocaddress = (vkprocaddess_t)my->SDL_Vulkan_GetVkGetInstanceProcAddr();
 
     if(emu->context->vkprocaddress)
-        return my_vkGetDeviceProcAddr;
+        return (void*)AddCheckBridge(my_context->sdl2lib->priv.w.bridge, pFEpp, my_vkGetInstanceProcAddr, 0);
     return NULL;
 }
 
@@ -1037,23 +1042,24 @@ const char* sdl2Name = "libSDL2-2.0.so.0";
 #define LIBNAME sdl2
 
 #define CUSTOM_INIT \
-    box86->sdl2lib = lib; \
-    lib->priv.w.p2 = getSDL2My(lib); \
+    box86->sdl2lib = lib;                                           \
+    lib->priv.w.p2 = getSDL2My(lib);                                \
     box86->sdl2allocrw = ((sdl2_my_t*)lib->priv.w.p2)->SDL_AllocRW; \
-    box86->sdl2freerw  = ((sdl2_my_t*)lib->priv.w.p2)->SDL_FreeRW; \
-    lib->altmy = strdup("my2_"); \
-    lib->priv.w.needed = 4; \
+    box86->sdl2freerw  = ((sdl2_my_t*)lib->priv.w.p2)->SDL_FreeRW;  \
+    lib->altmy = strdup("my2_");                                    \
+    lib->priv.w.needed = 4;                                         \
     lib->priv.w.neededlibs = (char**)calloc(lib->priv.w.needed, sizeof(char*)); \
-    lib->priv.w.neededlibs[0] = strdup("libdl.so.2"); \
-    lib->priv.w.neededlibs[1] = strdup("libm.so.6"); \
-    lib->priv.w.neededlibs[2] = strdup("librt.so.1"); \
+    lib->priv.w.neededlibs[0] = strdup("libdl.so.2");               \
+    lib->priv.w.neededlibs[1] = strdup("libm.so.6");                \
+    lib->priv.w.neededlibs[2] = strdup("librt.so.1");               \
     lib->priv.w.neededlibs[3] = strdup("libpthread.so.0");
 
 #define CUSTOM_FINI \
-    freeSDL2My(lib->priv.w.p2); \
-    free(lib->priv.w.p2); \
-    ((box86context_t*)(lib->context))->sdl2lib = NULL; \
-    ((box86context_t*)(lib->context))->sdl2allocrw = NULL; \
+    ((sdl2_my_t *)lib->priv.w.p2)->SDL_Quit();              \
+    freeSDL2My(lib->priv.w.p2);                             \
+    free(lib->priv.w.p2);                                   \
+    ((box86context_t*)(lib->context))->sdl2lib = NULL;      \
+    ((box86context_t*)(lib->context))->sdl2allocrw = NULL;  \
     ((box86context_t*)(lib->context))->sdl2freerw = NULL;
 
 

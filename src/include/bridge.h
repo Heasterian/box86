@@ -4,6 +4,7 @@
 
 typedef struct x86emu_s x86emu_t;
 typedef struct bridge_s bridge_t;
+typedef struct box86context_s box86context_t;
 typedef void (*wrapper_t)(x86emu_t* emu, uintptr_t fnc);
 
 bridge_t *NewBridge();

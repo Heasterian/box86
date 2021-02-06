@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <ucontext.h>
 #include <setjmp.h>
+#include <sys/mman.h>
 
 #include "box86context.h"
 #include "debug.h"
@@ -24,6 +25,7 @@
 #include "elfloader.h"
 #include "threads.h"
 #include "emu/x87emu_private.h"
+#include "custommem.h"
 #ifdef DYNAREC
 #include "dynablock.h"
 #include "../dynarec/dynablock_private.h"
@@ -273,7 +275,7 @@ uint32_t RunFunctionHandler(int* exit, uintptr_t fnc, int nargs, ...)
     
     /*SetFS(emu, default_fs);*/
     for (int i=0; i<6; ++i)
-        emu->segs_clean[i] = 0;
+        emu->segs_serial[i] = 0;
         
     R_ESP -= nargs*4;   // need to push in reverse order
 
@@ -398,11 +400,12 @@ uintptr_t getX86Address(dynablock_t* db, uintptr_t arm_addr)
 }
 #endif
 
-void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void** old_pc)
+void my_sigactionhandler_oldcode(int32_t sig, siginfo_t* info, void * ucntx, int* old_code)
 {
     // need to create some x86_ucontext????
     pthread_mutex_unlock(&my_context->mutex_trace);   // just in case
     printf_log(LOG_DEBUG, "Sigactionhanlder for signal #%d called (jump to %p/%s)\n", sig, (void*)my_context->signals[sig], GetNativeName((void*)my_context->signals[sig]));
+
     uintptr_t restorer = my_context->restorer[sig];
     // get that actual ESP first!
     x86emu_t *emu = thread_get_emu();
@@ -445,7 +448,7 @@ void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void*
     sigcontext->uc_mcontext.gregs[REG_ESP] = R_ESP;
     sigcontext->uc_mcontext.gregs[REG_EBX] = R_EBX;
     // flags
-    sigcontext->uc_mcontext.gregs[REG_EFL] = emu->packed_eflags.x32;
+    sigcontext->uc_mcontext.gregs[REG_EFL] = emu->eflags.x32;
     // get segments
     sigcontext->uc_mcontext.gregs[REG_GS] = R_GS;
     sigcontext->uc_mcontext.gregs[REG_FS] = R_FS;
@@ -504,17 +507,30 @@ void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void*
     TRAP_x86_MCHK       = 18,  // Machine check exception
     TRAP_x86_CACHEFLT   = 19   // SIMD exception (via SIGFPE) if CPU is SSE capable otherwise Cache flush exception (via SIGSEV)
     */
-
+    uint32_t prot = getProtection((uintptr_t)info->si_addr);
     if(sig==SIGBUS)
         sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 17;
     else if(sig==SIGSEGV) {
-        sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 
-            (info->si_code == SEGV_ACCERR)?((abs((intptr_t)info->si_addr-(intptr_t)sigcontext->uc_mcontext.gregs[REG_ESP])<16)?12:13):14;    // how to differenciate between a STACKFLT and a PAGEFAULT?
+        if((uintptr_t)info->si_addr == sigcontext->uc_mcontext.gregs[REG_EIP]) {
+            sigcontext->uc_mcontext.gregs[REG_ERR] = 0x0010;    // execution flag issue (probably)
+            sigcontext->uc_mcontext.gregs[REG_TRAPNO] = (info->si_code == SEGV_ACCERR)?13:14;
+        } else if(info->si_code==SEGV_ACCERR && !(prot&PROT_WRITE)) {
+            sigcontext->uc_mcontext.gregs[REG_ERR] = 0x0002;    // write flag issue
+            if(abs((intptr_t)info->si_addr-(intptr_t)sigcontext->uc_mcontext.gregs[REG_ESP])<16)
+                sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 12; // stack overflow probably
+            else
+                sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 14; // PAGE_FAULT
+        } else {
+            sigcontext->uc_mcontext.gregs[REG_TRAPNO] = (info->si_code == SEGV_ACCERR)?13:14;
+            //REG_ERR seems to be INT:8 CODE:8. So for write access segfault it's 0x0002 For a read it's 0x0004 (and 8 for exec). For an int 2d it could be 0x2D01 for example
+            sigcontext->uc_mcontext.gregs[REG_ERR] = 0x0004;    // read error? there is no execute control in box86 anyway
+        }
+        if(info->si_code == SEGV_ACCERR && old_code)
+            *old_code = -1;
     } else if(sig==SIGFPE)
         sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 19;
     else if(sig==SIGILL)
         sigcontext->uc_mcontext.gregs[REG_TRAPNO] = 6;
-
     // call the signal handler
     i386_ucontext_t sigcontext_copy = *sigcontext;
 
@@ -543,9 +559,9 @@ void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void*
             if(sigcontext->uc_mcontext.gregs[REG_EIP]!=sigcontext_copy.uc_mcontext.gregs[REG_EIP]) ejb->emu->ip.dword[0]=sigcontext->uc_mcontext.gregs[REG_EIP];
             sigcontext->uc_mcontext.gregs[REG_EIP] = R_EIP;
             // flags
-            if(sigcontext->uc_mcontext.gregs[REG_EFL]!=sigcontext_copy.uc_mcontext.gregs[REG_EFL]) ejb->emu->packed_eflags.x32=sigcontext->uc_mcontext.gregs[REG_EFL];
+            if(sigcontext->uc_mcontext.gregs[REG_EFL]!=sigcontext_copy.uc_mcontext.gregs[REG_EFL]) ejb->emu->eflags.x32=sigcontext->uc_mcontext.gregs[REG_EFL];
             // get segments
-            #define GO(S)   if(sigcontext->uc_mcontext.gregs[REG_##S]!=sigcontext_copy.uc_mcontext.gregs[REG_##S]) {ejb->emu->segs[_##S]=sigcontext->uc_mcontext.gregs[REG_##S]; ejb->emu->segs_clean[_##S] = 0;}
+            #define GO(S)   if(sigcontext->uc_mcontext.gregs[REG_##S]!=sigcontext_copy.uc_mcontext.gregs[REG_##S]) {ejb->emu->segs[_##S]=sigcontext->uc_mcontext.gregs[REG_##S]; ejb->emu->segs_serial[_##S] = 0;}
             GO(GS);
             GO(FS);
             GO(ES);
@@ -554,8 +570,8 @@ void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void*
             GO(SS);
             #undef GO
             printf_log(LOG_DEBUG, "Context has been changed in Sigactionhanlder, doing longjmp to resume emu\n");
-            if(old_pc)
-                *old_pc = NULL;    // re-init the value to allow another segfault at the same place
+            if(old_code)
+                *old_code = -1;    // re-init the value to allow another segfault at the same place
             if(used_stack)  // release stack
                 new_ss->ss_flags = 0;
             longjmp(ejb->jmpbuf, 1);
@@ -570,9 +586,11 @@ void my_sigactionhandler_oldpc(int32_t sig, siginfo_t* info, void * ucntx, void*
     if(used_stack)  // release stack
         new_ss->ss_flags = 0;
 }
+
 void my_box86signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
 {
     // sig==SIGSEGV || sig==SIGBUS || sig==SIGILL here!
+    int log_minimum = (my_context->is_sigaction[sig] && sig==SIGSEGV)?LOG_INFO:LOG_NONE;
     ucontext_t *p = (ucontext_t *)ucntx;
     void* addr = (void*)info->si_addr;  // address that triggered the issue
     void* esp = NULL;
@@ -580,12 +598,15 @@ void my_box86signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
     void * pc = (void*)p->uc_mcontext.arm_pc;
 #elif defined __i386
     void * pc = (void*)p->uc_mcontext.gregs[REG_EIP];
+#elif defined PPC
+    void * pc = (void*)p->uc_mcontext.uc_regs->gregs[PT_NIP];
 #else
     void * pc = NULL;    // unknow arch...
     #warning Unhandled architecture
 #endif
 #ifdef DYNAREC
-    if(sig==SIGSEGV && addr && info->si_code == SEGV_ACCERR && getDBFromAddress((uintptr_t)addr)) {
+    uint32_t prot = getProtection((uintptr_t)addr);
+    if ((sig==SIGSEGV) && (addr) && (info->si_code == SEGV_ACCERR) && (prot&PROT_DYNAREC)) {
         if(box86_dynarec_smc) {
             dynablock_t* db_pc = NULL;
             dynablock_t* db_addr = NULL;
@@ -598,20 +619,21 @@ void my_box86signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
                 }
             }
         }
-        dynarec_log(LOG_DEBUG, "Access to protected %p from %p, unprotecting memory\n", addr, pc);
-        // access error
-        unprotectDB((uintptr_t)addr, 1);    // unprotect 1 byte... But then, the whole page will be unprotected
+        dynarec_log(LOG_DEBUG, "Access to protected %p from %p, unprotecting memory (prot=%x)\n", addr, pc, prot);
+        // access error, unprotect the block (and mark them dirty)
+        if(prot&PROT_DYNAREC)   // on heavy multi-thread program, the protection can already be gone...
+            unprotectDB((uintptr_t)addr, 1);    // unprotect 1 byte... But then, the whole page will be unprotected
         // done
-        return;
+        if(prot&PROT_WRITE) return; // if there is no write permission, don't return and continue to program signal handling
     }
 #endif
     static int old_code = -1;
     static void* old_pc = 0;
     static void* old_addr = 0;
-    static int old_tid = 0;
     const char* signame = (sig==SIGSEGV)?"SIGSEGV":((sig==SIGBUS)?"SIGBUS":"SIGILL");
     if(old_code==info->si_code && old_pc==pc && old_addr==addr) {
-        printf_log(LOG_NONE, "%04d|Double %s!\n", GetTID(), signame);
+        printf_log(log_minimum, "%04d|Double %s (code=%d, pc=%p, addr=%p)!\n", GetTID(), signame, old_code, old_pc, old_addr);
+exit(-1);
     } else {
 #ifdef DYNAREC
         dynablock_t* db = FindDynablockFromNativeAddress(pc);
@@ -645,7 +667,7 @@ void my_box86signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
             if(v) {
                 // parent process, the one that have the segfault
                 volatile int waiting = 1;
-                printf_log(LOG_NONE, "Waiting for gdb...\n");
+                printf_log(LOG_NONE, "Waiting for %s (pid %d)...\n", (jit_gdb==2)?"gdbserver":"gdb", pid);
                 while(waiting) {
                     // using gdb, use "set waiting=0" to stop waiting...
                     usleep(1000);
@@ -653,40 +675,45 @@ void my_box86signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
             } else {
                 char myarg[50] = {0};
                 sprintf(myarg, "%d", pid);
-                execlp("gdb", "gdb", "-pid", myarg, (char*)NULL);
-                //execlp("gdbserver", "gdbserver", "127.0.0.1:1234", "--attach", myarg, (char*)NULL);
+                if(jit_gdb==2)
+                    execlp("gdbserver", "gdbserver", "127.0.0.1:1234", "--attach", myarg, (char*)NULL);
+                else
+                    execlp("gdb", "gdb", "-pid", myarg, (char*)NULL);
                 exit(-1);
             }
         }
 #ifdef DYNAREC
-        printf_log(LOG_NONE, "%04d|%s @%p (%s) (x86pc=%p/%s:\"%s\", esp=%p), for accessing %p (code=%d), db=%p(%p:%p/%p:%p/%s)", 
+        printf_log(log_minimum, "%04d|%s @%p (%s) (x86pc=%p/%s:\"%s\", esp=%p), for accessing %p (code=%d/prot=%x), db=%p(%p:%p/%p:%p/%s:%s)", 
             GetTID(), signame, pc, name, (void*)x86pc, elfname?elfname:"???", x86name?x86name:"???", esp, addr, info->si_code, 
-            db, db?db->block:0, db?(db->block+db->size):0, db?db->x86_addr:0, db?(db->x86_addr+db->x86_size):0, 
-            getAddrFunctionName((uintptr_t)(db?db->x86_addr:0)));
+            prot, db, db?db->block:0, db?(db->block+db->size):0, 
+            db?db->x86_addr:0, db?(db->x86_addr+db->x86_size):0, 
+            getAddrFunctionName((uintptr_t)(db?db->x86_addr:0)), (db?db->need_test:0)?"need_stest":"clean");
 #else
-        printf_log(LOG_NONE, "%04d|%s @%p (%s) (x86pc=%p/%s:\"%s\", esp=%p), for accessing %p (code=%d)", GetTID(), signame, pc, name, (void*)x86pc, elfname?elfname:"???", x86name?x86name:"???", esp, addr, info->si_code);
+        printf_log(log_minimum, "%04d|%s @%p (%s) (x86pc=%p/%s:\"%s\", esp=%p), for accessing %p (code=%d)", GetTID(), signame, pc, name, (void*)x86pc, elfname?elfname:"???", x86name?x86name:"???", esp, addr, info->si_code);
 #endif
         if(sig==SIGILL)
-            printf_log(LOG_NONE, " opcode=%02X %02X %02X %02X %02X %02X %02X %02X\n", ((uint8_t*)pc)[0], ((uint8_t*)pc)[1], ((uint8_t*)pc)[2], ((uint8_t*)pc)[3], ((uint8_t*)pc)[4], ((uint8_t*)pc)[5], ((uint8_t*)pc)[6], ((uint8_t*)pc)[7]);
+            printf_log(log_minimum, " opcode=%02X %02X %02X %02X %02X %02X %02X %02X\n", ((uint8_t*)pc)[0], ((uint8_t*)pc)[1], ((uint8_t*)pc)[2], ((uint8_t*)pc)[3], ((uint8_t*)pc)[4], ((uint8_t*)pc)[5], ((uint8_t*)pc)[6], ((uint8_t*)pc)[7]);
+        else if(sig==SIGBUS)
+            printf_log(log_minimum, " x86opcode=%02X %02X %02X %02X %02X %02X %02X %02X\n", ((uint8_t*)x86pc)[0], ((uint8_t*)x86pc)[1], ((uint8_t*)x86pc)[2], ((uint8_t*)x86pc)[3], ((uint8_t*)x86pc)[4], ((uint8_t*)x86pc)[5], ((uint8_t*)x86pc)[6], ((uint8_t*)x86pc)[7]);
         else
-            printf_log(LOG_NONE, "\n");
+            printf_log(log_minimum, "\n");
     }
     if(my_context->signals[sig] && my_context->signals[sig]!=1) {
         if(my_context->is_sigaction[sig])
-            my_sigactionhandler_oldpc(sig, info, ucntx, &old_pc);
+            my_sigactionhandler_oldcode(sig, info, ucntx, &old_code);
         else
             my_sighandler(sig);
         return;
     }
     // no handler (or double identical segfault)
     // set default and that's it, instruction will restart and default segfault handler will be called...
-    if(my_context->signals[sig]==1)
+    if(my_context->signals[sig]!=1)
         signal(sig, SIG_DFL);
 }
 
 void my_sigactionhandler(int32_t sig, siginfo_t* info, void * ucntx)
 {
-    my_sigactionhandler_oldpc(sig, info, ucntx, NULL);
+    my_sigactionhandler_oldcode(sig, info, ucntx, NULL);
 }
 
 EXPORT sighandler_t my_signal(x86emu_t* emu, int signum, sighandler_t handler)
@@ -984,8 +1011,9 @@ EXPORT int my_swapcontext(x86emu_t* emu, void* ucp1, void* ucp2)
 void init_signal_helper(box86context_t* context)
 {
     // setup signal handling
-    for(int i=0; i<MAX_SIGNAL; ++i)
+    for(int i=0; i<MAX_SIGNAL; ++i) {
         context->signals[i] = 1;    // SIG_DFL
+    }
 	struct sigaction action;
 	action.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
 	action.sa_sigaction = my_box86signalhandler;
